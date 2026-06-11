@@ -7,6 +7,7 @@
 #include "wifi_kincony.h"
 #include "ota_github.h"
 
+
 static i2c_master_bus_handle_t i2c_bus = NULL;
 
 void app_main(void)
@@ -43,7 +44,7 @@ void app_main(void)
          }
         }
 
-        
+
         /*
         Entradas_Kincony_Atualizar();
 
