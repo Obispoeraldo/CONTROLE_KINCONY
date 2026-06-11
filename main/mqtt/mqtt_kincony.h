@@ -6,6 +6,7 @@
 #include "esp_err.h"
 
 #define MQTT_KINCONY_BROKER_URI      "mqtt://192.168.0.100:1883"
+//#define MQTT_KINCONY_BROKER_URI "mqtt://192.168.0.100:1883"
 
 #define MQTT_TOPIC_STATUS            "kincony/status"
 #define MQTT_TOPIC_ENTRADAS          "kincony/entradas"
