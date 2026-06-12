@@ -1,101 +1,81 @@
-/*
- * entradas_kincony.c
- *
- * Driver para leitura das entradas digitais do módulo de relés Kincony.
- * Utiliza o PCF8574 para ler o estado das entradas via I2C.
- *
- * Criado em: 2024-06-01
- * Autor: DANIEL 
- * Versão: 1.0
- */
-
-/*------------------------ EXEMPLO DE USO NO MAIN.C ------------------------
-INCLUINDO O CABEÇALHO
 #include "entradas_kincony.h"
 
-static i2c_master_bus_handle_t i2c_bus = NULL;
-
-void app_main(void)
-{   
-
--------------------------- INICIANDO O BUS I2C --------------------------- 
-    i2c_master_bus_config_t bus_config = {
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .i2c_port = I2C_NUM_0,
-        .scl_io_num = 22,
-        .sda_io_num = 21,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-
-    ---------------------------- INICIANDO O MÓDULO DE ENTRADAS ----------------------
-    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &i2c_bus));
-
-    ESP_ERROR_CHECK(Entradas_Kincony_Init(i2c_bus));
-
-    while (1)
-    {
-    ------------------------------ ATUALIZANDO E LENDO AS ENTRADAS ----------------------
-        Entradas_Kincony_Atualizar();
-
-        if (Entradas_Kincony_Get(ENTRADA_1))
-        {
-            printf("Entrada 1 acionada\n");
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
-}*/
-
-#include "entradas_kincony.h"
+#include <stdio.h>
+#include "driver/i2c.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#define TAG "ENTRADAS_KINCONY"
+#define TAG "ENTRADAS"
 
-static i2c_master_dev_handle_t entradas_dev = NULL;
+#define I2C_PORT        I2C_NUM_0
+#define I2C_SDA         4
+#define I2C_SCL         15
+#define PCF8574_ADDR    0x22
 
-static uint8_t entradas_raw = 0xFF;
-static uint8_t entradas_tratadas = 0x00;
-static bool entradas_online = false;
+#define I2C_FREQ_HZ     50000
+#define TEMPO_LEITURA_MS 100
 
-esp_err_t Entradas_Kincony_Init(i2c_master_bus_handle_t i2c_bus)
+uint8_t entrada_1 = 0;
+uint8_t entrada_2 = 0;
+uint8_t entrada_3 = 0;
+uint8_t entrada_4 = 0;
+uint8_t entrada_5 = 0;
+uint8_t entrada_6 = 0;
+uint8_t entrada_7 = 0;
+uint8_t entrada_8 = 0;
+
+uint8_t grupo_motor1 = 0;
+uint8_t grupo_motor2 = 0;
+uint8_t grupo_motor3 = 0;
+uint8_t grupo_motor4 = 0;
+uint8_t grupo_motor5 = 0;
+uint8_t grupo_motor6 = 0;
+uint8_t chave_remoto = 0;
+
+static uint8_t entradas_estado = 0;
+static uint8_t entradas_online = 0;
+static TickType_t ultima_leitura = 0;
+
+esp_err_t Entradas_Kincony_Iniciar(void)
 {
-    i2c_device_config_t dev_config = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = ENTRADAS_KINCONY_ADDR,
-        .scl_speed_hz = 100000,
+    i2c_config_t conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = I2C_SDA,
+        .scl_io_num = I2C_SCL,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = I2C_FREQ_HZ,
     };
 
-    esp_err_t ret = i2c_master_bus_add_device(i2c_bus, &dev_config, &entradas_dev);
+    esp_err_t ret;
 
-    if (ret == ESP_OK)
+    ret = i2c_param_config(I2C_PORT, &conf);
+    if (ret != ESP_OK)
     {
-        ESP_LOGI(TAG, "PCF8574 entradas iniciado no endereco 0x%02X", ENTRADAS_KINCONY_ADDR);
-        entradas_online = true;
-    }
-    else
-    {
-        ESP_LOGE(TAG, "Erro ao iniciar PCF8574 entradas");
-        entradas_online = false;
+        ESP_LOGE(TAG, "Erro i2c_param_config");
+        return ret;
     }
 
-    return ret;
+    ret = i2c_driver_install(I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Erro i2c_driver_install");
+        return ret;
+    }
+
+    ESP_LOGI(TAG, "I2C iniciado SDA=%d SCL=%d ADDR=0x%02X", I2C_SDA, I2C_SCL, PCF8574_ADDR);
+
+    return ESP_OK;
 }
 
-esp_err_t Entradas_Kincony_Atualizar(void)
+static esp_err_t Entradas_Kincony_Ler(void)
 {
-    if (entradas_dev == NULL)
-    {
-        entradas_online = false;
-        return ESP_FAIL;
-    }
-
     uint8_t valor_lido = 0xFF;
 
-    esp_err_t ret = i2c_master_receive(
-        entradas_dev,
+    esp_err_t ret = i2c_master_read_from_device(
+        I2C_PORT,
+        PCF8574_ADDR,
         &valor_lido,
         1,
         pdMS_TO_TICKS(100)
@@ -103,47 +83,54 @@ esp_err_t Entradas_Kincony_Atualizar(void)
 
     if (ret != ESP_OK)
     {
-        entradas_online = false;
-        ESP_LOGW(TAG, "Falha ao ler entradas");
+        entradas_online = 0;
+        ESP_LOGW(TAG, "Falha ao ler PCF8574");
         return ret;
     }
 
-    entradas_raw = valor_lido;
+    entradas_estado = ~valor_lido;
 
-    /*
-        PCF8574:
-        Entrada normal aberta/pull-up = 1
-        Entrada acionada por negativo = 0
+    entrada_1 = (entradas_estado & (1 << 0)) ? 1 : 0;
+    entrada_2 = (entradas_estado & (1 << 1)) ? 1 : 0;
+    entrada_3 = (entradas_estado & (1 << 2)) ? 1 : 0;
+    entrada_4 = (entradas_estado & (1 << 3)) ? 1 : 0;
+    entrada_5 = (entradas_estado & (1 << 4)) ? 1 : 0;
+    entrada_6 = (entradas_estado & (1 << 5)) ? 1 : 0;
+    entrada_7 = (entradas_estado & (1 << 6)) ? 1 : 0;
+    entrada_8 = (entradas_estado & (1 << 7)) ? 1 : 0;
 
-        Por isso inverte:
-        bit 1 = entrada acionada
-        bit 0 = entrada desligada
-    */
-    entradas_tratadas = ~entradas_raw;
+    grupo_motor1 = entrada_1;
+    grupo_motor2 = entrada_2;
+    grupo_motor3 = entrada_3;
+    grupo_motor4 = entrada_4;
+    grupo_motor5 = entrada_5;
+    grupo_motor6 = entrada_6;
+    chave_remoto = entrada_7;
 
-    entradas_online = true;
+    entradas_online = 1;
 
     return ESP_OK;
 }
 
-bool Entradas_Kincony_Get(entrada_kincony_t entrada)
+void Entradas_Kincony_Processar(void)
 {
-    if (entrada >= ENTRADAS_KINCONY_QTD)
+    TickType_t agora = xTaskGetTickCount();
+
+    if ((agora - ultima_leitura) >= pdMS_TO_TICKS(TEMPO_LEITURA_MS))
     {
-        return false;
+        ultima_leitura = agora;
+        Entradas_Kincony_Ler();
     }
-
-    return (entradas_tratadas & (1 << entrada)) != 0;
 }
 
-uint8_t Entradas_Kincony_GetRaw(void)
+uint8_t Entradas_Kincony_Get(entrada_kincony_t entrada)
 {
-    return entradas_raw;
+    return (entradas_estado & (1 << entrada)) ? 1 : 0;
 }
 
-uint8_t Entradas_Kincony_GetEstadoTratado(void)
+uint8_t Entradas_Kincony_GetEstado(void)
 {
-    return entradas_tratadas;
+    return entradas_estado;
 }
 
 bool Entradas_Kincony_IsOnline(void)

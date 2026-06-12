@@ -7,32 +7,21 @@
 #include "wifi_kincony.h"
 #include "ota_github.h"
 
- 
-static i2c_master_bus_handle_t i2c_bus = NULL;
-
 void app_main(void)
 { 
-    i2c_master_bus_config_t bus_config = {
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .i2c_port = I2C_NUM_0,
-        .scl_io_num = 22,
-        .sda_io_num = 21,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-    
-    ESP_ERROR_CHECK(Wifi_Kincony_Init("Galaxy Tab A", "1234567890"));
 
-    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &i2c_bus));
+    ESP_ERROR_CHECK(Entradas_Kincony_Iniciar());
+        ESP_ERROR_CHECK(Saidas_Kincony_Iniciar());
 
-    ESP_ERROR_CHECK(Entradas_Kincony_Init(i2c_bus));
-
+       
+    //ESP_ERROR_CHECK(Wifi_Kincony_Init("iPhone de Daniel", "12345679"));
 
         uint8_t umavez = 1;
+
     while (1)
     {
 
-        if(umavez)
+      /*  if(umavez)
         {
             if (Wifi_Kincony_IsConectado())
         {
@@ -42,20 +31,28 @@ void app_main(void)
         {
             umavez = 1;
          }
-        }
-
-
-        /*
-        Entradas_Kincony_Atualizar();
-
-        if (Entradas_Kincony_Get(ENTRADA_1))
-        {
-            printf("Entrada 1 acionada\n");
         }*/
+        
+  Entradas_Kincony_Processar();
+
+        printf("E1=%d E2=%d E3=%d E4=%d E5=%d E6=%d E7=%d E8=%d\n",
+               entrada_1, entrada_2, entrada_3, entrada_4,
+               entrada_5, entrada_6, entrada_7, entrada_8);
+
+                if (grupo_motor1)
+        {
+            Saidas_Kincony_Ligar(SAIDA_1);
+        }
+        else
+        {
+            Saidas_Kincony_Desligar(SAIDA_1);
+        }
+               
+
+        vTaskDelay(pdMS_TO_TICKS(500));
 
 
-
-
-        vTaskDelay(pdMS_TO_TICKS(1000));
     }
-}
+
+        
+    }

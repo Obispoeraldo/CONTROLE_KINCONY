@@ -4,30 +4,41 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
-#include "driver/i2c_master.h"
- 
-#define ENTRADAS_KINCONY_ADDR        0x24
-#define ENTRADAS_KINCONY_QTD         8
 
 typedef enum
 {
-    ENTRADA_1 = 0,
-    ENTRADA_2,
-    ENTRADA_3,
-    ENTRADA_4,
-    ENTRADA_5,
-    ENTRADA_6,
-    ENTRADA_7,
+    GRUPO_MOTOR1 = 0,
+    GRUPO_MOTOR2,
+    GRUPO_MOTOR3,
+    GRUPO_MOTOR4,
+    GRUPO_MOTOR5,
+    GRUPO_MOTOR6,
+    CHAVE_REMOTO,
     ENTRADA_8
 } entrada_kincony_t;
 
-esp_err_t Entradas_Kincony_Init(i2c_master_bus_handle_t i2c_bus);
-esp_err_t Entradas_Kincony_Atualizar(void);
+extern uint8_t entrada_1;
+extern uint8_t entrada_2;
+extern uint8_t entrada_3;
+extern uint8_t entrada_4;
+extern uint8_t entrada_5;
+extern uint8_t entrada_6;
+extern uint8_t entrada_7;
+extern uint8_t entrada_8;
 
-bool Entradas_Kincony_Get(entrada_kincony_t entrada);
-uint8_t Entradas_Kincony_GetRaw(void);
-uint8_t Entradas_Kincony_GetEstadoTratado(void);
+extern uint8_t grupo_motor1;
+extern uint8_t grupo_motor2;
+extern uint8_t grupo_motor3;
+extern uint8_t grupo_motor4;
+extern uint8_t grupo_motor5;
+extern uint8_t grupo_motor6;
+extern uint8_t chave_remoto;
 
+esp_err_t Entradas_Kincony_Iniciar(void);
+void Entradas_Kincony_Processar(void);
+
+uint8_t Entradas_Kincony_Get(entrada_kincony_t entrada);
+uint8_t Entradas_Kincony_GetEstado(void);
 bool Entradas_Kincony_IsOnline(void);
 
 #endif
