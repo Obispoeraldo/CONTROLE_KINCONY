@@ -34,6 +34,7 @@ void app_main(void)
 #include "esp_https_ota.h"
 #include "esp_crt_bundle.h"
 #include "cJSON.h"
+#include "wifi_kincony.h"
 
 #define OTA_MANIFEST_URL "https://raw.githubusercontent.com/dnx98/OTA/main/firmware/manifest.json"
 
@@ -43,6 +44,23 @@ void app_main(void)
 static const char *TAG = "OTA_GITHUB";
 
 static char ota_buffer[OTA_BUFFER_SIZE];
+
+uint8_t versao_firmware_atual = 1;
+
+    void verifica_atualizacao(void){
+
+     if(versao_firmware_atual)
+        {
+            if (Wifi_Kincony_IsConectado())
+        {
+            ota_github_check_update();
+            versao_firmware_atual = 0;
+         } else
+        {
+            versao_firmware_atual = 1;
+         }
+        }
+    }
 
 static int version_compare(const char *v1, const char *v2)
 {

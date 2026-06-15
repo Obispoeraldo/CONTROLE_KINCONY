@@ -4,8 +4,8 @@
   "idf.openOcdConfigs": [
     "board/esp32-wrover-kit-3.3v.cfg"
   ],  
-  "idf.portWin": "COM9",
-  "idf.currentSetup": "C:/Espressif/frameworks/esp-idf-v5.4.4/",
+  "idf.portWin": "COM5",
+  "idf.currentSetup": "C:\\esp\\v5.5.4\\esp-idf",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32"
   },
@@ -16,5 +16,5 @@
     "--compile-commands-dir=c:\\Users\\danmo\\CONTROLE_KINCONY\\build"
   ],
   "idf.flashType": "UART",
-  "idf.monitorPort": "COM9"
+  "idf.monitorPort": "COM5"
 }
