@@ -11,16 +11,13 @@
 "mqtts://453e5f32c60a48529669859610ab6a88.s1.eu.hivemq.cloud:8883"
 
 /* Topicos de monitoramento */
-#define MQTT_TOPIC_STATUS                "kincony/status"
-#define MQTT_TOPIC_ENTRADAS              "kincony/monitoramento/entradas"
-#define MQTT_TOPIC_SAIDAS                "kincony/monitoramento/saidas"
-#define MQTT_TOPIC_CONTROLE              "kincony/monitoramento/controle"
-#define MQTT_TOPIC_GRUPOS                "kincony/monitoramento/grupos"
-#define MQTT_TOPIC_FALHAS                "kincony/monitoramento/falhas"
+#define MQTT_BASE_TOPIC                 "aquapulse/fazenda01/acude01"
 
-/* Topicos de comando */
-#define MQTT_TOPIC_COMANDO_GRUPO         "kincony/comando/grupo"
-#define MQTT_TOPIC_COMANDO_GERAL         "kincony/comando/geral"
+#define MQTT_TOPIC_STATE                MQTT_BASE_TOPIC "/state"
+#define MQTT_TOPIC_CMD                  MQTT_BASE_TOPIC "/cmd"
+#define MQTT_TOPIC_STATUS               MQTT_BASE_TOPIC "/status"
+
+#define MQTT_PUBLICACAO_MONITORAMENTO_MS 1000
 
 /* Mantido por compatibilidade com seu codigo antigo */
 #define MQTT_TOPIC_COMANDO_SAIDA         MQTT_TOPIC_COMANDO_GRUPO

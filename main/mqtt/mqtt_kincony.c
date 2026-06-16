@@ -32,6 +32,15 @@
 #include "freertos/task.h"
 #include "esp_crt_bundle.h"
 
+#include "cJSON.h"
+#include "esp_timer.h"
+
+#include "esp_system.h"
+
+extern uint8_t versao_firmware_atual;
+
+static void tratar_comando_cmd_json(const char *payload);
+
 #define TAG "MQTT_KINCONY"
 
 #define MQTT_QOS_COMANDO        1
@@ -251,11 +260,8 @@ static void Mqtt_Kincony_EventHandler(
                 MQTT_RETAIN_STATUS
             );
 
-            esp_mqtt_client_subscribe(mqtt_client, MQTT_TOPIC_COMANDO_GRUPO, MQTT_QOS_COMANDO);
-            esp_mqtt_client_subscribe(mqtt_client, MQTT_TOPIC_COMANDO_GERAL, MQTT_QOS_COMANDO);
-
-            ESP_LOGI(TAG, "Inscrito: %s", MQTT_TOPIC_COMANDO_GRUPO);
-            ESP_LOGI(TAG, "Inscrito: %s", MQTT_TOPIC_COMANDO_GERAL);
+            esp_mqtt_client_subscribe(mqtt_client, MQTT_TOPIC_CMD, MQTT_QOS_COMANDO);
+            ESP_LOGI(TAG, "Inscrito: %s", MQTT_TOPIC_CMD);
 
             Mqtt_Kincony_PublicarMonitoramento();
             break;
@@ -279,13 +285,9 @@ static void Mqtt_Kincony_EventHandler(
             ESP_LOGI(TAG, "Topico: %s", topico);
             ESP_LOGI(TAG, "Payload: %s", payload);
 
-            if (topico_igual(event, MQTT_TOPIC_COMANDO_GRUPO))
+            if (topico_igual(event, MQTT_TOPIC_CMD))
             {
-                tratar_comando_grupo_texto(payload);
-            }
-            else if (topico_igual(event, MQTT_TOPIC_COMANDO_GERAL))
-            {
-                tratar_comando_geral(payload);
+                tratar_comando_cmd_json(payload);
             }
             else
             {
@@ -315,12 +317,19 @@ esp_err_t Mqtt_Kincony_Init(const char *broker_uri)
         return ESP_ERR_INVALID_ARG;
     }
 
-    esp_mqtt_client_config_t mqtt_config = {
-        .broker.address.uri = broker_uri,
-        .broker.verification.crt_bundle_attach = esp_crt_bundle_attach,
-        .credentials.username = "administrador",
-        .credentials.authentication.password = "Administrador2026",
-    };
+esp_mqtt_client_config_t mqtt_config = {
+    .broker.address.uri = broker_uri,
+    .broker.verification.crt_bundle_attach = esp_crt_bundle_attach,
+
+    .credentials.username = "administrador",
+    .credentials.authentication.password = "Administrador2026",
+
+    .session.last_will.topic = MQTT_TOPIC_STATUS,
+    .session.last_will.msg = "offline",
+    .session.last_will.msg_len = 7,
+    .session.last_will.qos = MQTT_QOS_MONITORAMENTO,
+    .session.last_will.retain = true,
+};
 
     mqtt_client = esp_mqtt_client_init(&mqtt_config);
 
@@ -406,90 +415,6 @@ esp_err_t Mqtt_Kincony_PublicarStatus(const char *mensagem)
     return Mqtt_Kincony_Publicar(MQTT_TOPIC_STATUS, mensagem);
 }
 
-esp_err_t Mqtt_Kincony_PublicarEntradas(uint8_t entradas)
-{
-    char payload[64];
-
-    snprintf(payload, sizeof(payload),
-             "{\"raw\":%u,\"online\":%u,\"remoto\":%u}",
-             entradas,
-             Entradas_Kincony_IsOnline() ? 1 : 0,
-             Logica_Controle_IsRemoto() ? 1 : 0);
-
-    return Mqtt_Kincony_Publicar(MQTT_TOPIC_ENTRADAS, payload);
-}
-
-esp_err_t Mqtt_Kincony_PublicarSaidas(uint8_t saidas)
-{
-    char payload[64];
-
-    snprintf(payload, sizeof(payload),
-             "{\"raw\":%u,\"online\":%u}",
-             saidas,
-             Saidas_Kincony_IsOnline() ? 1 : 0);
-
-    return Mqtt_Kincony_Publicar(MQTT_TOPIC_SAIDAS, payload);
-}
-
-esp_err_t Mqtt_Kincony_PublicarControle(void)
-{
-    char payload[192];
-
-    snprintf(payload, sizeof(payload),
-             "{\"mqtt\":1,\"remoto\":%u,\"falha_geral\":%u,\"grupos_ligados\":%u,\"falhas\":%u,\"entradas_online\":%u,\"saidas_online\":%u}",
-             Logica_Controle_IsRemoto() ? 1 : 0,
-             Logica_Controle_IsFalhaGeral() ? 1 : 0,
-             Logica_Controle_GetMascaraLigados(),
-             Logica_Controle_GetMascaraFalhas(),
-             Entradas_Kincony_IsOnline() ? 1 : 0,
-             Saidas_Kincony_IsOnline() ? 1 : 0);
-
-    return Mqtt_Kincony_Publicar(MQTT_TOPIC_CONTROLE, payload);
-}
-
-esp_err_t Mqtt_Kincony_PublicarGrupos(void)
-{
-    char payload[512];
-    int pos = 0;
-
-    pos += snprintf(payload + pos, sizeof(payload) - pos, "{\"grupos\":[");
-
-    for (uint8_t i = 0; i < LOGICA_CONTROLE_NUM_GRUPOS; i++)
-    {
-        pos += snprintf(payload + pos, sizeof(payload) - pos,
-                        "%s{\"id\":%u,\"comando\":%u,\"feedback\":%u,\"estado\":\"%s\",\"falha\":\"%s\"}",
-                        (i == 0) ? "" : ",",
-                        i + 1,
-                        Logica_Controle_GetComandoGrupo((logica_grupo_t)i) ? 1 : 0,
-                        Logica_Controle_GetFeedbackGrupo((logica_grupo_t)i) ? 1 : 0,
-                        Logica_Controle_EstadoToString(Logica_Controle_GetEstadoGrupo((logica_grupo_t)i)),
-                        Logica_Controle_FalhaToString(Logica_Controle_GetFalhaGrupo((logica_grupo_t)i)));
-
-        if (pos >= (int)sizeof(payload))
-        {
-            break;
-        }
-    }
-
-    snprintf(payload + pos, sizeof(payload) - pos, "]}");
-
-    return Mqtt_Kincony_Publicar(MQTT_TOPIC_GRUPOS, payload);
-}
-
-esp_err_t Mqtt_Kincony_PublicarFalhas(void)
-{
-    char payload[128];
-
-    snprintf(payload, sizeof(payload),
-             "{\"falha_geral\":%u,\"mascara_falhas\":%u,\"entradas_online\":%u,\"saidas_online\":%u}",
-             Logica_Controle_IsFalhaGeral() ? 1 : 0,
-             Logica_Controle_GetMascaraFalhas(),
-             Entradas_Kincony_IsOnline() ? 1 : 0,
-             Saidas_Kincony_IsOnline() ? 1 : 0);
-
-    return Mqtt_Kincony_Publicar(MQTT_TOPIC_FALHAS, payload);
-}
-
 esp_err_t Mqtt_Kincony_PublicarMonitoramento(void)
 {
     if (!mqtt_conectado)
@@ -497,17 +422,153 @@ esp_err_t Mqtt_Kincony_PublicarMonitoramento(void)
         return ESP_FAIL;
     }
 
-    Mqtt_Kincony_PublicarStatus("online");
-    Mqtt_Kincony_PublicarEntradas(Entradas_Kincony_GetEstado());
-    Mqtt_Kincony_PublicarSaidas(Saidas_Kincony_GetEstado());
-    Mqtt_Kincony_PublicarControle();
-    Mqtt_Kincony_PublicarGrupos();
-    Mqtt_Kincony_PublicarFalhas();
+    char payload[768];
+    int pos = 0;
 
-    return ESP_OK;
+    int64_t ts = esp_timer_get_time() / 1000000;
+
+    pos += snprintf(payload + pos, sizeof(payload) - pos,
+        "{"
+        "\"id\":\"aerador-01\","
+        "\"ts\":%lld,"
+        "\"mode\":\"%s\","
+        "\"online\":true,"
+        "\"alarm\":%s,"
+        "\"oxygen\":0,"
+        "\"groups\":[",
+        ts,
+        Logica_Controle_IsRemoto() ? "remoto" : "local",
+        Logica_Controle_IsFalhaGeral() ? "true" : "false"
+    );
+
+    for (uint8_t i = 0; i < LOGICA_CONTROLE_NUM_GRUPOS; i++)
+    {
+        bool out = Logica_Controle_GetComandoGrupo((logica_grupo_t)i);
+        bool fb = Logica_Controle_GetFeedbackGrupo((logica_grupo_t)i);
+        bool fault = Logica_Controle_GetFalhaGrupo((logica_grupo_t)i) != LOGICA_FALHA_NENHUMA;
+
+        pos += snprintf(payload + pos, sizeof(payload) - pos,
+            "%s{\"g\":%u,\"out\":%s,\"fb\":%s,\"fault\":%s,\"src\":\"manual\"}",
+            (i == 0) ? "" : ",",
+            i + 1,
+            out ? "true" : "false",
+            fb ? "true" : "false",
+            fault ? "true" : "false"
+        );
+    }
+
+    snprintf(payload + pos, sizeof(payload) - pos, "]}");
+
+    return Mqtt_Kincony_Publicar(MQTT_TOPIC_STATE, payload);
 }
 
 bool Mqtt_Kincony_IsConectado(void)
 {
     return mqtt_conectado;
+}
+static void tratar_comando_cmd_json(const char *payload)
+{
+    cJSON *root = cJSON_Parse(payload);
+
+    if (root == NULL)
+    {
+        ESP_LOGW(TAG, "JSON invalido: %s", payload);
+        return;
+    }
+
+    cJSON *group = cJSON_GetObjectItem(root, "group");
+    cJSON *action = cJSON_GetObjectItem(root, "action");
+    cJSON *src = cJSON_GetObjectItem(root, "src");
+
+    if (!cJSON_IsString(action))
+    {
+        ESP_LOGW(TAG, "Payload CMD sem action valida");
+        cJSON_Delete(root);
+        return;
+    }
+
+    if (src != NULL && cJSON_IsString(src))
+    {
+        ESP_LOGI(TAG, "Comando origem: %s", src->valuestring);
+    }
+
+    if (strcmp(action->valuestring, "reset_esp") == 0)
+    {
+        Mqtt_Kincony_Publicar(MQTT_TOPIC_STATUS, "resetting");
+        vTaskDelay(pdMS_TO_TICKS(500));
+
+        cJSON_Delete(root);
+                esp_restart();
+        return;
+    }
+
+    if (strcmp(action->valuestring, "ota_enable") == 0)
+    {
+        versao_firmware_atual = 1;
+
+        Mqtt_Kincony_Publicar(
+            MQTT_TOPIC_STATE,
+            "{\"ota_enable\":true,\"versao_firmware_atual\":1}"
+        );
+
+        cJSON_Delete(root);
+        return;
+    }
+        if (strcmp(action->valuestring, "reset_faults") == 0)
+{
+    Logica_Controle_ResetarFalhas();
+
+    Mqtt_Kincony_Publicar(
+        MQTT_TOPIC_STATE,
+        "{\"reset_faults\":true}"
+    );
+
+    cJSON_Delete(root);
+    return;
+}
+
+
+    if (!cJSON_IsNumber(group))
+    {
+        ESP_LOGW(TAG, "Comando de grupo sem campo group");
+        cJSON_Delete(root);
+        return;
+    }
+
+    int grupo = group->valueint;
+    bool ligar;
+
+    if (strcmp(action->valuestring, "on") == 0)
+    {
+        ligar = true;
+    }
+    else if (strcmp(action->valuestring, "off") == 0)
+    {
+        ligar = false;
+    }
+    else
+    {
+        ESP_LOGW(TAG, "Action invalida: %s", action->valuestring);
+        cJSON_Delete(root);
+        return;
+    }
+
+
+    if (grupo == 0)
+    {
+        for (uint8_t i = 0; i < LOGICA_CONTROLE_NUM_GRUPOS; i++)
+        {
+            Logica_Controle_SetComandoGrupo((logica_grupo_t)i, ligar);
+        }
+    }
+    else if (grupo >= 1 && grupo <= LOGICA_CONTROLE_NUM_GRUPOS)
+    {
+        Logica_Controle_SetComandoGrupo((logica_grupo_t)(grupo - 1), ligar);
+    }
+    else
+    {
+        ESP_LOGW(TAG, "Grupo invalido: %d", grupo);
+    }
+
+    cJSON_Delete(root);
 }
