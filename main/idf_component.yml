@@ -15,4 +15,5 @@ dependencies:
   #   # All dependencies of `main` are public by default.
   #   public: true
   espressif/esp-modbus: ^2.1.2
+  espressif/esp-mqtt: ">=1.0.0"
  

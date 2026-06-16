@@ -76,3 +76,8 @@ Desktop.ini
 *.workspace # General workspace files, can be from various tools
 *.suo       # Visual Studio Solution User Options
 *.sln.docstates # Visual Studio
+
+# VS Code - configurações locais de cada desenvolvedor (NAO commitar)
+.vscode/settings.local.json
+.vscode/launch.json
+.vscode/c_cpp_properties.json

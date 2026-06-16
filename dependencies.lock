@@ -12,10 +12,10 @@ dependencies:
   idf:
     source:
       type: idf
-    version: 5.5.4
+    version: 6.0.1
 direct_dependencies:
 - espressif/esp-modbus
 - idf
 manifest_hash: c3904d5d1e060c4e72af7b18645f3b0c28852ba2e2a56bf0702662c3ecdacdbc
 target: esp32
-version: 2.0.0
+version: 3.0.0
