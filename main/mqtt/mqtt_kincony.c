@@ -36,6 +36,7 @@
 #include "esp_timer.h"
 
 #include "esp_system.h"
+#include "ota_github.h"
 
 extern uint8_t versao_firmware_atual;
 
@@ -235,6 +236,14 @@ static void tratar_comando_geral(const char *payload_original)
     }
 }
 
+static void montar_status_payload(char *buffer, size_t tamanho, const char *status)
+{
+    snprintf(buffer, tamanho,
+             "{\"status\":\"%s\",\"fw\":\"%s\"}",
+             status,
+             FIRMWARE_VERSION);
+}
+
 static void Mqtt_Kincony_EventHandler(
     void *handler_args,
     esp_event_base_t base,
@@ -251,10 +260,13 @@ static void Mqtt_Kincony_EventHandler(
             mqtt_conectado = true;
             ESP_LOGI(TAG, "MQTT conectado ao Mosquitto");
 
+            char status_payload[96];
+            montar_status_payload(status_payload, sizeof(status_payload), "online");
+            
             esp_mqtt_client_publish(
                 mqtt_client,
                 MQTT_TOPIC_STATUS,
-                "online",
+                status_payload,
                 0,
                 MQTT_QOS_MONITORAMENTO,
                 MQTT_RETAIN_STATUS
@@ -325,8 +337,8 @@ esp_mqtt_client_config_t mqtt_config = {
     .credentials.authentication.password = "Administrador2026",
 
     .session.last_will.topic = MQTT_TOPIC_STATUS,
-    .session.last_will.msg = "offline",
-    .session.last_will.msg_len = 7,
+    .session.last_will.msg = "{\"status\":\"offline\",\"fw\":\"" FIRMWARE_VERSION "\"}",
+    .session.last_will.msg_len = sizeof("{\"status\":\"offline\",\"fw\":\"" FIRMWARE_VERSION "\"}") - 1,
     .session.last_will.qos = MQTT_QOS_MONITORAMENTO,
     .session.last_will.retain = true,
 };
@@ -410,9 +422,13 @@ esp_err_t Mqtt_Kincony_Publicar(const char *topico, const char *mensagem)
     return ESP_OK;
 }
 
-esp_err_t Mqtt_Kincony_PublicarStatus(const char *mensagem)
+esp_err_t Mqtt_Kincony_PublicarStatus(const char *status)
 {
-    return Mqtt_Kincony_Publicar(MQTT_TOPIC_STATUS, mensagem);
+    char payload[96];
+
+    montar_status_payload(payload, sizeof(payload), status);
+
+    return Mqtt_Kincony_Publicar(MQTT_TOPIC_STATUS, payload);
 }
 
 esp_err_t Mqtt_Kincony_PublicarMonitoramento(void)
@@ -494,7 +510,7 @@ static void tratar_comando_cmd_json(const char *payload)
 
     if (strcmp(action->valuestring, "reset_esp") == 0)
     {
-        Mqtt_Kincony_Publicar(MQTT_TOPIC_STATUS, "resetting");
+        Mqtt_Kincony_PublicarStatus("resetting");
         vTaskDelay(pdMS_TO_TICKS(500));
 
         cJSON_Delete(root);
