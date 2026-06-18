@@ -25,7 +25,9 @@
 /* Periodo padrao para publicar monitoramento */
 #define MQTT_PUBLICACAO_MONITORAMENTO_MS 1000
 
-esp_err_t Mqtt_Kincony_Init(const char *broker_uri);
+// Editado por Eraldo Bispo — usuario/senha agora configuraveis pelo painel web (antes fixos no
+// codigo). Passe string vazia para nao enviar credenciais (broker sem autenticacao).
+esp_err_t Mqtt_Kincony_Init(const char *broker_uri, const char *usuario, const char *senha);
 void Mqtt_Kincony_Processar(void);
 
 esp_err_t Mqtt_Kincony_Publicar(const char *topico, const char *mensagem);

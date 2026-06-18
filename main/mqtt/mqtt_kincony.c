@@ -322,7 +322,7 @@ static void Mqtt_Kincony_EventHandler(
     }
 }
 
-esp_err_t Mqtt_Kincony_Init(const char *broker_uri)
+esp_err_t Mqtt_Kincony_Init(const char *broker_uri, const char *usuario, const char *senha)
 {
     if (broker_uri == NULL)
     {
@@ -333,15 +333,24 @@ esp_mqtt_client_config_t mqtt_config = {
     .broker.address.uri = broker_uri,
     .broker.verification.crt_bundle_attach = esp_crt_bundle_attach,
 
-    .credentials.username = "administrador",
-    .credentials.authentication.password = "Administrador2026",
-
     .session.last_will.topic = MQTT_TOPIC_STATUS,
     .session.last_will.msg = "{\"status\":\"offline\",\"fw\":\"" FIRMWARE_VERSION "\"}",
     .session.last_will.msg_len = sizeof("{\"status\":\"offline\",\"fw\":\"" FIRMWARE_VERSION "\"}") - 1,
     .session.last_will.qos = MQTT_QOS_MONITORAMENTO,
     .session.last_will.retain = true,
 };
+
+    // Editado por Eraldo Bispo — credenciais do broker agora vem do painel web (NVS), nao mais
+    // fixas no codigo. So define se nao vier vazio (broker sem autenticacao fica sem credenciais).
+    if (usuario != NULL && strlen(usuario) > 0)
+    {
+        mqtt_config.credentials.username = usuario;
+    }
+
+    if (senha != NULL && strlen(senha) > 0)
+    {
+        mqtt_config.credentials.authentication.password = senha;
+    }
 
     mqtt_client = esp_mqtt_client_init(&mqtt_config);
 

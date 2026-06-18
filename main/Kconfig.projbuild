@@ -24,18 +24,18 @@ menu "Kincony Configuration"
             Exemplo sem TLS: mqtt://test.mosquitto.org:1883
             Exemplo com TLS: mqtts://meu-broker.hivemq.cloud:8883
 
-    # Criado por Eraldo Bispo — credenciais opcionais do broker MQTT, editaveis pelo painel web.
-    # Ainda nao usadas pelo Mqtt_Kincony_Init() deste projeto (so aceita broker_uri por enquanto).
+    # Editado por Eraldo Bispo — credenciais do broker MQTT, agora editaveis pelo painel web.
+    # Defaults iguais aos que estavam fixos no codigo antes, para nao mudar o comportamento atual.
     config KINCONY_MQTT_USER
         string "Usuario do broker MQTT (opcional)"
-        default ""
+        default "administrador"
         help
             Usuario para autenticacao no broker MQTT. Deixe vazio se o broker
             nao exigir autenticacao.
 
     config KINCONY_MQTT_PASSWORD
         string "Senha do broker MQTT (opcional)"
-        default ""
+        default "Administrador2026"
         help
             Senha para autenticacao no broker MQTT. Deixe vazio se o broker
             nao exigir autenticacao.
