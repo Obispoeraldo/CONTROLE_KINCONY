@@ -7,7 +7,9 @@ idf_component_register(SRCS
     "mqtt/mqtt_kincony.c"
     "ota/ota_github.c"
     "logica_controle/logica_controle.c"
- 
+    # Criado por Eraldo Bispo — painel web de configuracao de WiFi/broker (copiado do projeto do Eraldo)
+    "config_server/config_server_kincony.c"
+
     INCLUDE_DIRS
     "."
     "entradas_digitais"
@@ -17,6 +19,7 @@ idf_component_register(SRCS
     "mqtt"
     "ota"
     "logica_controle"
+    "config_server"
     REQUIRES
     freertos
     driver
@@ -25,9 +28,16 @@ idf_component_register(SRCS
     esp_event
     nvs_flash
     mqtt
-    esp_http_client 
-    esp_https_ota 
-    esp-tls 
-    json 
+    esp_http_client
+    esp_https_ota
+    esp-tls
+    json
     app_update
+    # Criado por Eraldo Bispo — necessarios pelo painel web (config_server_kincony.c)
+    esp_http_server
+    esp_hw_support
+
+    # Criado por Eraldo Bispo — logo AquaPulse embutida no firmware, servida em /logo.jpg
+    EMBED_FILES
+    "config_server/logo_aquapulse.jpg"
 )

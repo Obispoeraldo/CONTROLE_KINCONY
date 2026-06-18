@@ -195,6 +195,25 @@ esp_err_t Wifi_Kincony_Init(const char *ssid, const char *senha)
     return ESP_OK;
 }
 
+// Criado por Eraldo Bispo — usado pelo main.c para saber se deve reverter para o WiFi anterior em caso de falha
+bool Wifi_Kincony_EsperarResultado(uint32_t timeout_ms)
+{
+    if (wifi_event_group == NULL)
+    {
+        return false;
+    }
+
+    EventBits_t bits = xEventGroupWaitBits(
+        wifi_event_group,
+        WIFI_BIT_CONECTADO | WIFI_BIT_FALHA,
+        pdFALSE,
+        pdFALSE,
+        pdMS_TO_TICKS(timeout_ms)
+    );
+
+    return (bits & WIFI_BIT_CONECTADO) != 0;
+}
+
 bool Wifi_Kincony_IsConectado(void)
 {
     return wifi_conectado;
