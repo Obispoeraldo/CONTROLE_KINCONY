@@ -7,12 +7,14 @@ idf_component_register(SRCS
     "mqtt/mqtt_kincony.c"
     "ota/ota_github.c"
     "logica_controle/logica_controle.c"
+    "rtc/rtc_ds1307.c"
     # Criado por Eraldo Bispo — painel web de configuracao de WiFi/broker (copiado do projeto do Eraldo)
     "config_server/config_server_kincony.c"
 
     INCLUDE_DIRS
     "."
     "entradas_digitais"
+    "rtc"
     "saidas_digitais"
     "modbus_rtu_slave"
     "wifi"

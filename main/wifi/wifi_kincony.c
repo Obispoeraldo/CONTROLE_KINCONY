@@ -52,6 +52,8 @@ void app_main(void)
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 
+#include "rtc/rtc_ds1307.h"
+
 #define TAG "WIFI_KINCONY"
 
 #define WIFI_BIT_CONECTADO     BIT0
@@ -191,6 +193,8 @@ esp_err_t Wifi_Kincony_Init(const char *ssid, const char *senha)
     ESP_ERROR_CHECK(esp_wifi_start());
 
     ESP_LOGI(TAG, "WiFi iniciado. Conectando em: %s", wifi_ssid);
+
+    RTC_DS1307_AtualizarHorarioInternet();
 
     return ESP_OK;
 }

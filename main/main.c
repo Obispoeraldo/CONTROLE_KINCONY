@@ -9,6 +9,7 @@
 #include "ota_github.h"
 #include "logica_controle.h"
 #include "config_server_kincony.h"
+#include "rtc_ds1307.h"
 
 void app_main(void)
 {
@@ -17,6 +18,10 @@ void app_main(void)
     ESP_ERROR_CHECK(Saidas_Kincony_Iniciar());
 
     Logica_Controle_Iniciar();
+
+    
+
+     RTC_DS1307_Iniciar();
 
     // Criado por Eraldo Bispo — carrega WiFi/broker da NVS (ou do menuconfig na primeira vez)
     ESP_ERROR_CHECK(Config_Server_Kincony_Iniciar());
@@ -31,6 +36,8 @@ void app_main(void)
 
     //inicializa o wifi antes do mqtt para garantir que a conexão esteja pronta
     ESP_ERROR_CHECK(Wifi_Kincony_Init(wifi_ssid, wifi_senha));
+
+      rtc_ds1307_t horario;
 
     // Criado por Eraldo Bispo — se a senha WiFi configurada pelo painel estiver errada, o ESP nao consegue
     // mais ser acessado pela rede. Aqui aguardamos o resultado da conexao e, se falhar, revertemos
@@ -59,7 +66,19 @@ void app_main(void)
     // Processar lógica de controle do sistema
     Logica_Controle_Processar();
     // Processar MQTT (publicação de monitoramento e recebimento de comandos)
-    Mqtt_Kincony_Processar();       
+    Mqtt_Kincony_Processar();     
+    
+ if (RTC_DS1307_LerHorario(&horario) == ESP_OK)
+        {
+            printf("RTC: %02d/%02d/%04d %02d:%02d:%02d\n",
+                   horario.dia,
+                   horario.mes,
+                   horario.ano,
+                   horario.hora,
+                   horario.minuto,
+                   horario.segundo);
+        }
+
 
     vTaskDelay(pdMS_TO_TICKS(5000));
      }   
