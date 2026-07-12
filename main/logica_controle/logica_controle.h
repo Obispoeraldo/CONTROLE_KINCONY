@@ -28,12 +28,6 @@
 #define LOGICA_TIMEOUT_PARADA_MS                5000
 #define LOGICA_INTERVALO_ENTRE_PARTIDAS_MS      3000
 
-/*
- * IMPORTANTE:
- * Pelo seu exemplo, a ENTRADA 6 e a chave remoto/local.
- * No seu entradas_kincony.h atual, ENTRADA_6 fisica corresponde ao enum GRUPO_MOTOR6.
- * Se depois voce quiser usar a entrada nomeada CHAVE_REMOTO, troque no .c ou ajuste o enum.
- */
 #define LOGICA_USAR_ENTRADA_6_COMO_REMOTO       1
 
 /*
@@ -92,9 +86,17 @@ extern bool logica_modo_remoto;
 extern bool logica_falha_geral;
 extern uint8_t logica_mascara_grupos_ligados;
 extern uint8_t logica_mascara_falhas;
+// Criado por Eraldo Bispo - 18/06/2026 22:17 - estado atual do alarme geral (saida 06)
+extern bool logica_alarme_ativo;
 
 esp_err_t Logica_Controle_Iniciar(void);
 void Logica_Controle_Processar(void);
+
+// Criado por Eraldo Bispo - 18/06/2026 22:17 - liga/desliga a saida 06 (alarme do controlador).
+// Chamar a cada volta do loop principal, passando o status atual de MQTT e WiFi. Ver motivo
+// completo no comentario da implementacao em logica_controle.c.
+void Logica_Controle_AtualizarAlarme(bool mqtt_conectado, bool wifi_conectado);
+bool Logica_Controle_IsAlarmeAtivo(void);
 
 /* Funcoes que o MQTT vai usar futuramente */
 esp_err_t Logica_Controle_SetComandoGrupo(logica_grupo_t grupo, bool ligar);

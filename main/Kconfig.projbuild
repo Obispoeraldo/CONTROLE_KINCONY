@@ -24,18 +24,18 @@ menu "Kincony Configuration"
             Exemplo sem TLS: mqtt://test.mosquitto.org:1883
             Exemplo com TLS: mqtts://meu-broker.hivemq.cloud:8883
 
-    # Criado por Eraldo Bispo — credenciais opcionais do broker MQTT, editaveis pelo painel web.
-    # Ainda nao usadas pelo Mqtt_Kincony_Init() deste projeto (so aceita broker_uri por enquanto).
+    # Editado por Eraldo Bispo — credenciais do broker MQTT, agora editaveis pelo painel web.
+    # Defaults iguais aos que estavam fixos no codigo antes, para nao mudar o comportamento atual.
     config KINCONY_MQTT_USER
         string "Usuario do broker MQTT (opcional)"
-        default ""
+        default "administrador"
         help
             Usuario para autenticacao no broker MQTT. Deixe vazio se o broker
             nao exigir autenticacao.
 
     config KINCONY_MQTT_PASSWORD
         string "Senha do broker MQTT (opcional)"
-        default ""
+        default "Administrador2026"
         help
             Senha para autenticacao no broker MQTT. Deixe vazio se o broker
             nao exigir autenticacao.
@@ -51,5 +51,32 @@ menu "Kincony Configuration"
         default "aquapulse2026"
         help
             Senha exigida para acessar a pagina web de configuracao do ESP.
+
+    # Criado por Eraldo Bispo - 24/06/2026 - data/hora via NTP (sem RTC com bateria na placa,
+    # nao ha o que configurar manualmente - se perderia a cada reboot). Editavel pelo painel
+    # web (pagina /configuracoes) - estes valores so valem na primeira vez que o ESP liga.
+    config KINCONY_NTP_SERVIDOR
+        string "Servidor NTP"
+        default "pool.ntp.org"
+        help
+            Servidor usado para sincronizar a data/hora pela internet.
+
+    config KINCONY_NTP_FUSO_HORAS
+        int "Fuso horario (horas em relacao a UTC)"
+        default -3
+        range -12 14
+        help
+            Fuso horario local. Brasil (Brasilia) = -3. Sem horario de verao
+            (abolido no Brasil desde 2019).
+
+    # Criado por Eraldo Bispo - 11/07/2026 - intervalo de publicacao MQTT configuravel pelo
+    # painel web sem reinicializar. Editavel em /configuracoes (campo "Intervalo de Atualizacao MQTT").
+    config KINCONY_MQTT_INTERVALO_S
+        int "Intervalo de publicacao MQTT (segundos)"
+        default 5
+        range 1 180
+        help
+            Tempo entre publicacoes automaticas no broker MQTT.
+            Pode ser alterado pelo painel web sem reiniciar o controlador.
 
 endmenu

@@ -13,6 +13,8 @@ bool logica_modo_remoto = false;
 bool logica_falha_geral = false;
 uint8_t logica_mascara_grupos_ligados = 0;
 uint8_t logica_mascara_falhas = 0;
+// Criado por Eraldo Bispo - 18/06/2026 22:17 - estado atual do alarme geral (saida 06)
+bool logica_alarme_ativo = false;
 
 static bool remoto_anterior = false;
 static TickType_t tick_ultima_partida = 0;
@@ -269,6 +271,11 @@ void Logica_Controle_Processar(void)
                 logica_grupos[i].aguardando_intervalo = false;
             }
 
+            // Editado por Eraldo Bispo - 18/06/2026 22:17 - troca de REMOTO para LOCAL e uma acao
+            // normal do operador (chave fisica), nao uma falha: os grupos vao para AGUARDANDO_PARADA
+            // (estado normal), nunca LOGICA_ESTADO_FALHA, entao isso nao ativa o alarme geral
+            // (logica_falha_geral so e setado por timeout/perda de feedback/entradas-saidas offline,
+            // ver atualizar_mascaras() e Logica_Controle_AtualizarAlarme()).
 #if LOGICA_DESLIGAR_AO_SAIR_REMOTO
             for (uint8_t i = 0; i < LOGICA_CONTROLE_NUM_GRUPOS; i++)
             {
@@ -431,4 +438,39 @@ const char *Logica_Controle_FalhaToString(logica_tipo_falha_t falha)
         case LOGICA_FALHA_ENTRADAS_OFFLINE: return "ENTRADAS_OFFLINE";
         default: return "DESCONHECIDA";
     }
+}
+
+// Criado por Eraldo Bispo - 18/06/2026 22:17 - liga a saida 06 (alarme do controlador) sempre que
+// houver falha de algum grupo (timeout de partida/parada, perda de feedback, entradas/saidas
+// offline - tudo isso ja cai em logica_falha_geral via atualizar_mascaras()) OU perda de conexao
+// com o broker MQTT OU perda do WiFi. Troca de modo REMOTO/LOCAL nao entra aqui propositalmente
+// (ver comentario em Logica_Controle_Processar()), pois e operacao normal, nao falha.
+// So escreve na saida quando o estado do alarme muda, para nao floodar o I2C a cada volta do loop.
+void Logica_Controle_AtualizarAlarme(bool mqtt_conectado, bool wifi_conectado)
+{
+    bool alarme = logica_falha_geral || !mqtt_conectado || !wifi_conectado;
+
+    if (alarme == logica_alarme_ativo)
+    {
+        return;
+    }
+
+    logica_alarme_ativo = alarme;
+
+    if (alarme)
+    {
+        Saidas_Kincony_Ligar(SAIDA_6);
+        ESP_LOGW(TAG, "Alarme ATIVADO (saida 06) | falha_geral=%d mqtt=%d wifi=%d",
+                 logica_falha_geral, mqtt_conectado, wifi_conectado);
+    }
+    else
+    {
+        Saidas_Kincony_Desligar(SAIDA_6);
+        ESP_LOGI(TAG, "Alarme DESATIVADO (saida 06)");
+    }
+}
+
+bool Logica_Controle_IsAlarmeAtivo(void)
+{
+    return logica_alarme_ativo;
 }
