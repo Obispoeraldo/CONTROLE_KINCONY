@@ -14,6 +14,8 @@ dependencies:
   #   # `public` flag doesn't have an effect dependencies of the `main` component.
   #   # All dependencies of `main` are public by default.
   #   public: true
+  # Criado por Eraldo Bispo — adicionados componentes removidos do core no IDF v6: esp-mqtt via git, cjson via registro
   espressif/esp-modbus: ^2.1.2
-  espressif/esp-mqtt: ">=1.0.0"
- 
+  espressif/esp-mqtt:
+    git: https://github.com/espressif/esp-mqtt.git
+  espressif/cjson: "*"

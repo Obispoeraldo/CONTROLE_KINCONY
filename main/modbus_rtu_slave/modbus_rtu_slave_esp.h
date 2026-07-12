@@ -11,9 +11,12 @@
  
 #define MB_RTU_SLAVE_ID        1
 #define MB_RTU_UART_PORT       UART_NUM_2
-#define MB_RTU_TX_PIN          17
-#define MB_RTU_RX_PIN          16
-#define MB_RTU_DE_RE_PIN       2
+// Editado por Eraldo Bispo - 21/06/2026 16:08 - pinos TX/RX corrigidos para os pinos reais do
+// RS485 da KC868-A6 v1.3 (GPIO27=TX, GPIO14=RX, confirmado no datasheet/comunidade ESPHome e
+// Tasmota). Os antigos (17/16) sao pinos de uso geral da placa, nao chegam ao transceptor RS485
+// fisico - por isso o Modbus RTU nunca se comunicava com um master externo no conector RS485.
+#define MB_RTU_TX_PIN          27
+#define MB_RTU_RX_PIN          14
 #define MB_RTU_BAUDRATE        9600
 
 // Altere só isso para mudar a quantidade de holding registers

@@ -1,0 +1,19 @@
+# Criado por Eraldo Bispo — garante que o build use o partitions.csv do projeto (OTA com
+# 2 slots de 1800K) em vez da tabela padrao de fabrica (so 1 app de 1MB), que ficou pequena
+# demais depois de adicionar MQTT, cJSON, servidor HTTP e a logo embutida (painel de WiFi).
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# Editado por Eraldo Bispo — o esquema OTA acima (2x1800K) exige mais de 2MB de flash, que e
+# o padrao do IDF. Usei 4MB porque foi o que confirmamos via "esptool flash_id" na mesma
+# familia de placa Kincony ESP32 usada neste projeto. Daniel: confirme com "esptool flash_id"
+# na sua placa especifica; se for diferente, ajuste aqui ou em "idf.py menuconfig".
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+
+# Criado por Eraldo Bispo — ota_github.c roda HTTPS/TLS direto na task "main", que estava com so
+# 3584 bytes de pilha (padrao do IDF) e estourava (vApplicationStackOverflowHook -> reboot)
+# durante o handshake TLS. O OTA foi movido para task propria, mas mantive uma margem extra aqui
+# tambem para o resto que roda na main (entradas, logica, MQTT processar).
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=10240

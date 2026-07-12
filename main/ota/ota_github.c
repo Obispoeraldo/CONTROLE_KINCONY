@@ -36,31 +36,46 @@ void app_main(void)
 #include "cJSON.h"
 #include "wifi_kincony.h"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
 #define OTA_MANIFEST_URL "https://raw.githubusercontent.com/dnx98/OTA/main/firmware/manifest.json"
 
 #define OTA_HTTP_TIMEOUT_MS 10000
 #define OTA_BUFFER_SIZE     2048
 
+// Criado por Eraldo Bispo — task dedicada para o OTA (TLS + HTTP + cJSON gastam bastante pilha)
+#define OTA_TASK_STACK_SIZE          10240
+#define OTA_TASK_INTERVALO_MS        5000
+
 static const char *TAG = "OTA_GITHUB";
 
 static char ota_buffer[OTA_BUFFER_SIZE];
 
+// Editado por Eraldo Bispo — mantida so por compatibilidade: mqtt_kincony.c usa essa variavel
+// (extern) no comando MQTT "ota_enable" para sinalizar um novo pedido de checagem. A task de OTA
+// abaixo ja checa periodicamente de qualquer forma, entao essa flag nao precisa mais ser lida aqui.
 uint8_t versao_firmware_atual = 1;
 
-    void verifica_atualizacao(void){
-
-     if(versao_firmware_atual)
-        {
-            if (Wifi_Kincony_IsConectado())
+// Editado por Eraldo Bispo — substitui o antigo verifica_atualizacao() chamado direto no loop da
+// task "main". Agora roda em loop dentro da propria task de OTA, criada com pilha generosa.
+static void ota_github_task(void *parametros)
+{
+    while (1)
+    {
+        if (Wifi_Kincony_IsConectado())
         {
             ota_github_check_update();
-            versao_firmware_atual = 0;
-         } else
-        {
-            versao_firmware_atual = 1;
-         }
         }
+
+        vTaskDelay(pdMS_TO_TICKS(OTA_TASK_INTERVALO_MS));
     }
+}
+
+void Ota_Github_IniciarTask(void)
+{
+    xTaskCreate(ota_github_task, "ota_github_task", OTA_TASK_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1, NULL);
+}
 
 static int version_compare(const char *v1, const char *v2)
 {
@@ -84,6 +99,9 @@ static esp_err_t ota_download_manifest(char *buffer, int buffer_size)
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_http_client_set_header(client, "Cache-Control", "no-cache");
+    esp_http_client_set_header(client, "Pragma", "no-cache");
+    esp_http_client_set_header(client, "User-Agent", "ESP32-OTA");
 
     if (client == NULL)
     {
