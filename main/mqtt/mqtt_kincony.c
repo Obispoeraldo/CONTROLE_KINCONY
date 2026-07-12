@@ -4,7 +4,7 @@
  * MQTT do Controle Kincony.
  *
  * Funcao deste modulo:
- * - conectar ao broker Mosquitto;
+ * - conectar ao broker configurado (qualquer broker, nao so o Mosquitto);
  * - receber comandos MQTT;
  * - encaminhar comandos para a maquina de estado em logica_controle.c;
  * - publicar monitoramento de entradas, saidas, estados e falhas.
@@ -27,6 +27,7 @@
 #include "entradas_kincony.h"
 #include "saidas_digitais_kincony.h"
 #include "logica_controle.h"
+#include "wifi_kincony.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -38,6 +39,8 @@
 #include "esp_system.h"
 #include "ota_github.h"
 
+// Criado por Daniel Montanher - RTC DS1307 + 4 timers persistentes de aeradores. Integrado por
+// Eraldo Bispo e Daniel Montanher a um servico de tempo unico (ver docs/RELATORIO_INTEGRACAO_ERALDO_DANIEL.md)
 #include "rtc_ds1307.h"
 
 extern uint8_t versao_firmware_atual;
@@ -54,6 +57,16 @@ static void tratar_comando_cmd_json(const char *payload);
 static esp_mqtt_client_handle_t mqtt_client = NULL;
 static bool mqtt_conectado = false;
 static TickType_t mqtt_tick_ultima_publicacao = 0;
+// Editado por Eraldo Bispo - 11/07/2026 - intervalo de publicacao automatica configuravel
+// pelo painel web em tempo real (sem reinicializar). Valor inicial: 5000 ms.
+static volatile uint32_t mqtt_intervalo_ms = 5000;
+// Editado por Eraldo Bispo — guarda a URI do broker configurada (pode ser qualquer broker, nao
+// so o Mosquitto), para o log de "MQTT_EVENT_CONNECTED" mostrar o broker real.
+static char mqtt_broker_uri[128] = {0};
+// Criado por Eraldo Bispo - 23/06/2026 - precisa ser estatico (nao variavel local) porque
+// esp_mqtt_client_config_t.session.last_will.msg guarda so o ponteiro, que tem que continuar
+// valido durante toda a vida do client MQTT (ate a proxima reconexao, quando reconstruimos).
+static char mqtt_lwt_payload[96] = {0};
 
 static bool topico_igual(const esp_mqtt_event_handle_t event, const char *topico)
 {
@@ -110,12 +123,28 @@ static void publicar_ack_comando(
 }
 
 
+// Editado por Eraldo Bispo - 23/06/2026 - acrescenta o IP atual da interface STA no payload de
+// status, para localizar o ESP32 na rede apos reboot/DHCP renovar o IP (Wifi_Kincony_GetIpAtual
+// nunca devolve "0.0.0.0": fica string vazia se a STA nao estiver conectada).
 static void montar_status_payload(char *buffer, size_t tamanho, const char *status)
 {
+    char ip_atual[16];
+    Wifi_Kincony_GetIpAtual(ip_atual, sizeof(ip_atual));
+
     snprintf(buffer, tamanho,
-             "{\"status\":\"%s\",\"fw\":\"%s\"}",
+             "{\"status\":\"%s\",\"fw\":\"%s\",\"IP\":\"%s\"}",
              status,
-             FIRMWARE_VERSION);
+             FIRMWARE_VERSION,
+             ip_atual);
+}
+
+// Criado por Eraldo Bispo - 23/06/2026 - callback unico registrado por outro modulo (ex
+// modbus_rs485_mqtt) para republicar seus proprios topicos retidos a cada reconexao MQTT.
+static mqtt_kincony_callback_conectado_t callback_conectado = NULL;
+
+void Mqtt_Kincony_RegistrarCallbackConectado(mqtt_kincony_callback_conectado_t callback)
+{
+    callback_conectado = callback;
 }
 
 static void Mqtt_Kincony_EventHandler(
@@ -132,26 +161,39 @@ static void Mqtt_Kincony_EventHandler(
         case MQTT_EVENT_CONNECTED:
         {
             mqtt_conectado = true;
-            ESP_LOGI(TAG, "MQTT conectado ao Mosquitto");
+            ESP_LOGI(TAG, "MQTT conectado ao broker: %s", mqtt_broker_uri);
 
             char status_payload[96];
             montar_status_payload(status_payload, sizeof(status_payload), "online");
-            
+
+            // Editado por Eraldo Bispo - 11/07/2026 - publicacao sem retain: clientes que
+            // assinarem depois nao devem receber estado antigo como se fosse atual.
             esp_mqtt_client_publish(
                 mqtt_client,
                 MQTT_TOPIC_STATUS,
                 status_payload,
                 0,
                 MQTT_QOS_MONITORAMENTO,
-                MQTT_RETAIN_STATUS
+                MQTT_RETAIN_MONITOR
             );
 
             esp_mqtt_client_subscribe(mqtt_client, MQTT_TOPIC_CMD, MQTT_QOS_COMANDO);
             ESP_LOGI(TAG, "Inscrito: %s", MQTT_TOPIC_CMD);
 
-            RTC_DS1307_SolicitarSincronizacaoInternet();
+            // Editado por Eraldo Bispo e Daniel Montanher - integracao - a sincronizacao de hora
+            // (NTP + RTC DS1307) NAO depende mais da conexao MQTT: ela roda desde o boot, assim
+            // que o WiFi conecta (ver Ntp_Kincony_Iniciar() em main.c). Chamar
+            // RTC_DS1307_SolicitarSincronizacaoInternet() aqui foi removido porque essa funcao
+            // abria um segundo cliente SNTP concorrente com o de ntp_kincony.c - ver
+            // docs/RELATORIO_INTEGRACAO_ERALDO_DANIEL.md, secao "Servico de tempo".
 
             Mqtt_Kincony_PublicarMonitoramento();
+
+            if (callback_conectado != NULL)
+            {
+                callback_conectado();
+            }
+
             break;
         }
 
@@ -209,26 +251,47 @@ case MQTT_EVENT_DATA:
     }
 }
 
-esp_err_t Mqtt_Kincony_Init(const char *broker_uri)
+esp_err_t Mqtt_Kincony_Init(const char *broker_uri, const char *usuario, const char *senha)
 {
     if (broker_uri == NULL)
     {
         return ESP_ERR_INVALID_ARG;
     }
 
+    strncpy(mqtt_broker_uri, broker_uri, sizeof(mqtt_broker_uri) - 1);
+    mqtt_broker_uri[sizeof(mqtt_broker_uri) - 1] = '\0';
+
+    // Editado por Eraldo Bispo - 23/06/2026 - LWT agora inclui o IP atual (montado com a mesma
+    // funcao usada no status online), em vez de string fixa sem IP. Limitacao conhecida: se o
+    // IP mudar enquanto o MQTT permanece conectado, o LWT so reflete o IP novo na proxima vez
+    // que Mqtt_Kincony_Init() rodar (reboot ou reconexao manual) - nao da pra atualizar o LWT
+    // de um client ja conectado no esp-mqtt sem recriar o client.
+    montar_status_payload(mqtt_lwt_payload, sizeof(mqtt_lwt_payload), "offline");
+
 esp_mqtt_client_config_t mqtt_config = {
     .broker.address.uri = broker_uri,
     .broker.verification.crt_bundle_attach = esp_crt_bundle_attach,
 
-    .credentials.username = "administrador",
-    .credentials.authentication.password = "Administrador2026",
-
     .session.last_will.topic = MQTT_TOPIC_STATUS,
-    .session.last_will.msg = "{\"status\":\"offline\",\"fw\":\"" FIRMWARE_VERSION "\"}",
-    .session.last_will.msg_len = sizeof("{\"status\":\"offline\",\"fw\":\"" FIRMWARE_VERSION "\"}") - 1,
+    .session.last_will.msg = mqtt_lwt_payload,
+    .session.last_will.msg_len = strlen(mqtt_lwt_payload),
     .session.last_will.qos = MQTT_QOS_MONITORAMENTO,
     .session.last_will.retain = true,
 };
+
+    // Editado por Eraldo Bispo — credenciais do broker agora vem do painel web (NVS), nao mais
+    // fixas no codigo (ver docs/RELATORIO_INTEGRACAO_ERALDO_DANIEL.md, credencial removida do
+    // historico "administrador"/"Administrador2026" - recomendado rotacionar no broker). So
+    // define se nao vier vazio (broker sem autenticacao fica sem credenciais).
+    if (usuario != NULL && strlen(usuario) > 0)
+    {
+        mqtt_config.credentials.username = usuario;
+    }
+
+    if (senha != NULL && strlen(senha) > 0)
+    {
+        mqtt_config.credentials.authentication.password = senha;
+    }
 
     mqtt_client = esp_mqtt_client_init(&mqtt_config);
 
@@ -273,7 +336,7 @@ void Mqtt_Kincony_Processar(void)
 
     TickType_t agora = xTaskGetTickCount();
 
-    if ((agora - mqtt_tick_ultima_publicacao) >= pdMS_TO_TICKS(MQTT_PUBLICACAO_MONITORAMENTO_MS))
+    if ((agora - mqtt_tick_ultima_publicacao) >= pdMS_TO_TICKS(mqtt_intervalo_ms))
     {
         mqtt_tick_ultima_publicacao = agora;
         Mqtt_Kincony_PublicarMonitoramento();
@@ -299,6 +362,35 @@ esp_err_t Mqtt_Kincony_Publicar(const char *topico, const char *mensagem)
         0,
         MQTT_QOS_MONITORAMENTO,
         MQTT_RETAIN_MONITOR
+    );
+
+    if (msg_id < 0)
+    {
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t Mqtt_Kincony_PublicarRetido(const char *topico, const char *mensagem)
+{
+    if (mqtt_client == NULL || topico == NULL || mensagem == NULL)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (!mqtt_conectado)
+    {
+        return ESP_FAIL;
+    }
+
+    int msg_id = esp_mqtt_client_publish(
+        mqtt_client,
+        topico,
+        mensagem,
+        0,
+        MQTT_QOS_MONITORAMENTO,
+        MQTT_RETAIN_STATUS
     );
 
     if (msg_id < 0)
@@ -369,6 +461,20 @@ bool Mqtt_Kincony_IsConectado(void)
 {
     return mqtt_conectado;
 }
+
+// Editado por Eraldo Bispo - 11/07/2026 - intervalo aplicado em tempo real, sem reiniciar.
+void Mqtt_Kincony_SetIntervaloMs(uint32_t ms)
+{
+    if (ms < 1000)   ms = 1000;
+    if (ms > 180000) ms = 180000;
+    mqtt_intervalo_ms = ms;
+}
+
+uint32_t Mqtt_Kincony_GetIntervaloMs(void)
+{
+    return mqtt_intervalo_ms;
+}
+
 static void tratar_comando_cmd_json(const char *payload)
 {
     cJSON *root = cJSON_Parse(payload);
