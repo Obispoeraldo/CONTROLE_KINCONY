@@ -1,4 +1,14 @@
 dependencies:
+  espressif/cjson:
+    component_hash: e788323270d90738662d66fffa910bfe1fba019bba087f01557e70c40485b469
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.7.19~2
   espressif/esp-modbus:
     component_hash: 56be3df9f436ce30ee513b9c4a77db13b0c3d6c1f52ee48f2198e7aba4319d3c
     dependencies:
@@ -9,13 +19,25 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 2.1.2
+  espressif/esp-mqtt:
+    component_hash: d85681dd3a53cac02b284d2d612b183b7768ea616215c64236a4ab12d2981e2b
+    dependencies:
+    - name: idf
+      version: '>=5.3'
+    source:
+      git: https://github.com/espressif/esp-mqtt.git
+      path: .
+      type: git
+    version: 512e943b0c629e61ff3529ff75e95786924b3cef
   idf:
     source:
       type: idf
-    version: 5.5.4
+    version: 6.0.1
 direct_dependencies:
+- espressif/cjson
 - espressif/esp-modbus
+- espressif/esp-mqtt
 - idf
-manifest_hash: c3904d5d1e060c4e72af7b18645f3b0c28852ba2e2a56bf0702662c3ecdacdbc
+manifest_hash: ccea0bf4eaba6a525f2036e83718330bf72c35b69bc343e217ea398a46be2ac1
 target: esp32
-version: 2.0.0
+version: 3.0.0
