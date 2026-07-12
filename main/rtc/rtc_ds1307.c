@@ -21,13 +21,17 @@
 #include "cJSON.h"
 #include "driver/i2c.h"
 #include "esp_log.h"
-#include "esp_sntp.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "nvs.h"
 
 #include "logica_controle.h"
+// Editado por Eraldo Bispo e Daniel Montanher - integracao - RTC_DS1307_NotificarSincronizacaoNtp()
+// e o gatilho de resync manual usam o cliente SNTP unico de ntp_kincony.c (esp_netif_sntp), em vez
+// de o RTC manter seu proprio cliente SNTP concorrente. Ver secao "Servico de tempo" do relatorio
+// de integracao (docs/RELATORIO_INTEGRACAO_ERALDO_DANIEL.md).
+#include "ntp_kincony.h"
 
 #define TAG "RTC_DS1307"
 
@@ -41,10 +45,6 @@
 #define RTC_TIMER_STORAGE_VERSION        1
 
 #define RTC_PROCESSAMENTO_INTERVALO_MS   1000
-#define RTC_NTP_TENTATIVAS               40
-#define RTC_NTP_INTERVALO_MS             500
-#define RTC_NTP_TASK_STACK               4096
-#define RTC_NTP_TASK_PRIORIDADE          5
 
 typedef struct
 {
@@ -70,10 +70,11 @@ static rtc_timer_config_t s_timers[RTC_TIMER_QUANTIDADE];
 static bool s_override_manual[LOGICA_CONTROLE_NUM_GRUPOS];
 
 static SemaphoreHandle_t s_mutex = NULL;
-static TaskHandle_t s_ntp_task = NULL;
 
-static volatile bool s_ntp_sincronizando = false;
 static volatile bool s_ntp_sincronizado = false;
+// Editado por Eraldo Bispo e Daniel Montanher - integracao - evita chamadas repetidas ao I2C
+// (e log flood) quando o chip DS1307 nao respondeu no boot (RTC_DS1307_Iniciar()).
+static volatile bool s_rtc_disponivel = false;
 
 static TickType_t s_ultimo_processamento = 0;
 static uint32_t s_ultima_assinatura_minuto = UINT32_MAX;
@@ -429,7 +430,6 @@ static void rtc_adicionar_horario_json(cJSON *root)
 
     cJSON_AddBoolToObject(root, "rtc_online", ret == ESP_OK);
     cJSON_AddBoolToObject(root, "ntp_synced", s_ntp_sincronizado);
-    cJSON_AddBoolToObject(root, "ntp_syncing", s_ntp_sincronizando);
 
     if (ret == ESP_OK)
     {
@@ -553,13 +553,22 @@ esp_err_t RTC_DS1307_Iniciar(void)
 
     if (ret != ESP_OK)
     {
-        ESP_LOGE(
+        // Editado por Eraldo Bispo e Daniel Montanher - integracao - nao propaga mais o erro
+        // como fatal: RTC_DS1307_Iniciar() e chamado sem ESP_ERROR_CHECK em main.c de proposito.
+        // Placas/variantes sem o chip DS1307 fisico (ver nota em ntp_kincony.h) devem continuar
+        // operando normalmente com a hora vindo apenas do NTP; os 4 timers de horario ficam
+        // apenas indisponiveis, sem travar o boot do controlador dos aeradores.
+        ESP_LOGW(
             TAG,
-            "DS1307 nao respondeu no endereco 0x%02X",
+            "DS1307 nao respondeu no endereco 0x%02X - RTC fisico indisponivel nesta placa; "
+            "hora e automacao por horario dependerao apenas do NTP",
             DS1307_ADDR
         );
-        return ret;
+        s_rtc_disponivel = false;
+        return ESP_OK;
     }
+
+    s_rtc_disponivel = true;
 
     ESP_LOGI(
         TAG,
@@ -596,6 +605,11 @@ esp_err_t RTC_DS1307_Iniciar(void)
     }
 
     return ESP_OK;
+}
+
+bool RTC_DS1307_EstaDisponivel(void)
+{
+    return s_rtc_disponivel;
 }
 
 esp_err_t RTC_DS1307_LerHorario(rtc_ds1307_t *rtc)
@@ -700,47 +714,40 @@ esp_err_t RTC_DS1307_GravarHorario(const rtc_ds1307_t *rtc)
     return ESP_OK;
 }
 
-esp_err_t RTC_DS1307_AtualizarHorarioInternet(void)
+// Editado por Eraldo Bispo e Daniel Montanher - integracao - RTC_DS1307_AtualizarHorarioInternet(),
+// rtc_ntp_task() e RTC_DS1307_SolicitarSincronizacaoInternet() (versao original de Daniel) foram
+// substituidos por este callback unico. Motivo: aquelas funcoes mantinham um SEGUNDO cliente SNTP
+// (API legada esp_sntp.h) rodando em paralelo ao cliente SNTP de ntp_kincony.c (API esp_netif_sntp),
+// ambos controlando o mesmo modulo SNTP global do lwIP - risco real de reinicializacao concorrente
+// do mesmo recurso (SNTP_EVENT/estado interno), alem de duas tasks concorrendo pelo mesmo objetivo.
+// Agora existe um unico cliente SNTP (ntp_kincony.c); este modulo apenas grava no DS1307 a hora
+// que o NTP acabou de confirmar, via o "sync_cb" configurado em Ntp_Kincony_Iniciar().
+//
+// Prioridade das fontes de hora, do sistema como um todo:
+//   1) NTP valido (assim que sincroniza, corrige o relogio do sistema E o DS1307)
+//   2) RTC fisico valido (aplicado ao relogio do sistema no boot, por RTC_DS1307_Iniciar(),
+//      antes mesmo do WiFi conectar - mantem a hora correta sem internet, com a bateria do DS1307)
+//   3) Hora invalida (nem RTC nem NTP disponiveis) - ver "clock_source":"invalid" em
+//      rtc_adicionar_horario_json() / Ntp_Kincony_ObterDataHoraFormatada() ("Sincronizando...")
+void RTC_DS1307_NotificarSincronizacaoNtp(const struct timeval *tv)
 {
-    ESP_LOGI(TAG, "Atualizando horario via internet...");
-
-    setenv("TZ", "BRT3", 1);
-    tzset();
-
-    esp_sntp_stop();
-    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    esp_sntp_setservername(0, "pool.ntp.org");
-    esp_sntp_setservername(1, "time.google.com");
-    esp_sntp_init();
-
-    bool sincronizou = false;
-
-    for (int tentativa = 0;
-         tentativa < RTC_NTP_TENTATIVAS;
-         tentativa++)
+    if (tv == NULL)
     {
-        if (esp_sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED)
-        {
-            sincronizou = true;
-            break;
-        }
-
-        ESP_LOGI(TAG, "Aguardando NTP...");
-        vTaskDelay(pdMS_TO_TICKS(RTC_NTP_INTERVALO_MS));
+        return;
     }
 
-    if (!sincronizou)
+    s_ntp_sincronizado = true;
+
+    if (!s_rtc_disponivel)
     {
-        esp_sntp_stop();
-        ESP_LOGE(TAG, "Falha ao obter horario via internet");
-        return ESP_ERR_TIMEOUT;
+        // Sem chip fisico nesta placa: o relogio do sistema (corrigido pelo NTP) e a unica
+        // fonte de hora: nao ha onde persistir para sobreviver a queda de energia/reboot.
+        return;
     }
 
-    time_t agora;
     struct tm timeinfo;
-
-    time(&agora);
-    localtime_r(&agora, &timeinfo);
+    time_t segundos = tv->tv_sec;
+    localtime_r(&segundos, &timeinfo);
 
     rtc_ds1307_t rtc = {
         .segundo = (uint8_t)timeinfo.tm_sec,
@@ -754,58 +761,13 @@ esp_err_t RTC_DS1307_AtualizarHorarioInternet(void)
 
     esp_err_t ret = RTC_DS1307_GravarHorario(&rtc);
 
-    esp_sntp_stop();
-
     if (ret == ESP_OK)
     {
-        s_ntp_sincronizado = true;
-        ESP_LOGI(TAG, "NTP sincronizado e DS1307 atualizado");
+        ESP_LOGI(TAG, "NTP sincronizado - DS1307 atualizado");
     }
-
-    return ret;
-}
-
-static void rtc_ntp_task(void *parametro)
-{
-    (void)parametro;
-
-    esp_err_t ret = RTC_DS1307_AtualizarHorarioInternet();
-
-    if (ret != ESP_OK)
+    else
     {
-        ESP_LOGW(TAG, "Sincronizacao NTP falhou: %s", esp_err_to_name(ret));
-    }
-
-    s_ntp_sincronizando = false;
-    s_ntp_task = NULL;
-
-    vTaskDelete(NULL);
-}
-
-void RTC_DS1307_SolicitarSincronizacaoInternet(void)
-{
-    if (s_ntp_sincronizando || s_ntp_task != NULL)
-    {
-        ESP_LOGI(TAG, "Sincronizacao NTP ja esta em andamento");
-        return;
-    }
-
-    s_ntp_sincronizando = true;
-
-    BaseType_t criado = xTaskCreate(
-        rtc_ntp_task,
-        "rtc_ntp_sync",
-        RTC_NTP_TASK_STACK,
-        NULL,
-        RTC_NTP_TASK_PRIORIDADE,
-        &s_ntp_task
-    );
-
-    if (criado != pdPASS)
-    {
-        s_ntp_sincronizando = false;
-        s_ntp_task = NULL;
-        ESP_LOGE(TAG, "Falha ao criar task de sincronizacao NTP");
+        ESP_LOGW(TAG, "NTP sincronizado, mas falhou ao gravar no DS1307: %s", esp_err_to_name(ret));
     }
 }
 
@@ -835,7 +797,7 @@ void RTC_DS1307_RegistrarComandoManual(uint8_t grupo)
 
 void RTC_DS1307_Processar(void)
 {
-    if (s_mutex == NULL)
+    if (s_mutex == NULL || !s_rtc_disponivel)
     {
         return;
     }
@@ -945,7 +907,17 @@ esp_err_t RTC_DS1307_ProcessarComandoMQTT(
 
     if (strcmp(acao, "rtc_sync") == 0)
     {
-        RTC_DS1307_SolicitarSincronizacaoInternet();
+        // Editado por Eraldo Bispo e Daniel Montanher - integracao - forca uma nova rodada de
+        // sincronizacao no cliente SNTP unico (ntp_kincony.c) em vez de abrir um segundo cliente
+        // SNTP proprio deste modulo. O resultado chega de forma assincrona em
+        // RTC_DS1307_NotificarSincronizacaoNtp() (ver comentario acima desta funcao).
+        esp_err_t ret_resync = Ntp_Kincony_ForcarResincronizacao();
+
+        if (ret_resync != ESP_OK)
+        {
+            ESP_LOGW(TAG, "Falha ao solicitar resincronizacao NTP: %s", esp_err_to_name(ret_resync));
+        }
+
         cJSON_Delete(root);
 
         return json_resposta_simples(
