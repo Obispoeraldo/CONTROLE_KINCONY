@@ -6,6 +6,7 @@
 #include "modbus_rtu_slave_esp.h"
 #include "mqtt_kincony.h"
 #include "wifi_kincony.h"
+#include "wifi_config_button.h"
 #include "ota_github.h"
 #include "logica_controle.h"
 #include "config_server_kincony.h"
@@ -55,21 +56,25 @@ void app_main(void)
     //inicializa o wifi antes do mqtt para garantir que a conexão esteja pronta
     ESP_ERROR_CHECK(Wifi_Kincony_Init(wifi_ssid, wifi_senha));
 
-    // Criado por Eraldo Bispo — se a senha WiFi configurada pelo painel estiver errada, o ESP nao consegue
-    // mais ser acessado pela rede. Aqui aguardamos o resultado da conexao e, se falhar, revertemos
-    // automaticamente para o ultimo WiFi que funcionou (salvo como backup ao editar pelo painel).
-    if (!Wifi_Kincony_EsperarResultado(30000))
+    // Criado por Eraldo Bispo - inicializa o botao fisico de configuracao (GPIO0/BOOT - ver
+    // wifi_config_button.h). Le a cada volta do loop, sem bloquear.
+    ESP_ERROR_CHECK(Wifi_Config_Button_Iniciar());
+
+    // Editado por Eraldo Bispo - espera curta so para o log do boot informar se a conexao
+    // inicial foi rapida - NAO decide mais se o modulo "desiste" da rede: a reconexao continua
+    // para sempre em segundo plano (backoff progressivo 30s/60s/5min, ver wifi_kincony.c) e o
+    // portal de configuracao abre sozinho apos alguns minutos sem conexao, ou a qualquer
+    // momento pelo botao fisico - nao ha mais timeout global nem necessidade de escolher entre
+    // "esperar a rede antiga" e "poder configurar uma nova" (ver docs/RELATORIO_WIFI_RECONEXAO.md).
+    if (!Wifi_Kincony_EsperarResultado(8000))
     {
+        // Se a rede configurada pelo painel falhou logo no boot e existe um backup do ultimo
+        // WiFi que funcionou (salvo automaticamente em trocas anteriores pelo painel), tenta
+        // reverter para ele. Sem backup, so segue o boot normalmente - Wifi_Kincony_Processar()
+        // no loop abaixo abre o portal sozinho se a desconexao persistir.
         if (Config_Server_Kincony_RestaurarBackupWifi() == ESP_OK)
         {
             esp_restart();
-        }
-        else
-        {
-            // Editado por Eraldo Bispo — nem o WiFi atual nem o backup foram encontrados (ex: ESP
-            // levado para outro local sem nenhuma rede conhecida). Liga um Access Point proprio
-            // para o painel continuar acessivel sem precisar de cabo USB.
-            Wifi_Kincony_IniciarModoEmergenciaAP();
         }
     }
 
@@ -121,6 +126,12 @@ void app_main(void)
     // ~1x/segundo, so age uma vez por minuto). Nao faz nada se o RTC fisico nao estiver
     // disponivel nesta placa (ver RTC_DS1307_EstaDisponivel()).
     RTC_DS1307_Processar();
+    // Criado por Eraldo Bispo - reconexao/portal de configuracao WiFi (ver
+    // docs/RELATORIO_WIFI_RECONEXAO.md). Nenhuma das duas bloqueia: Wifi_Kincony_Processar()
+    // so verifica um temporizador interno (abre o portal sozinho apos desconexao prolongada);
+    // Wifi_Config_Button_Processar() so le o nivel do GPIO0 (botao BOOT).
+    Wifi_Kincony_Processar();
+    Wifi_Config_Button_Processar();
     // Editado por Eraldo Bispo - 23/06/2026 - publica em MQTT o estado do barramento RS485 e dos
     // dispositivos Modbus configurados (a leitura em si roda na task dedicada, ver modbus_rs485_master.c)
     Modbus_RS485_Mqtt_Processar();

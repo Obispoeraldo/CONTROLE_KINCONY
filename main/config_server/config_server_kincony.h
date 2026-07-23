@@ -51,6 +51,17 @@ uint32_t Config_Server_Kincony_GetMqttIntervaloMs(void);
 // Retorna ESP_OK se havia um backup e foi restaurado, ESP_FAIL se nao havia nada para restaurar.
 esp_err_t Config_Server_Kincony_RestaurarBackupWifi(void);
 
+// Criado por Eraldo Bispo - usado pelo botao fisico de configuracao (10s, ver
+// wifi_config_button.c): apaga so as credenciais WiFi (atuais e backup) da NVS, sem tocar em
+// broker MQTT/NTP. Util quando o SSID/senha salvos nao existem mais no local.
+esp_err_t Config_Server_Kincony_ApagarCredenciaisWifi(void);
+
+// Criado por Eraldo Bispo - usado pelo botao fisico de configuracao (30s, ver
+// wifi_config_button.c): apaga TODO o namespace de configuracao (WiFi, broker MQTT, NTP,
+// intervalo de publicacao) - o proximo boot volta a usar os padroes do menuconfig. Nao
+// reinicia sozinho - quem chama decide quando reiniciar.
+esp_err_t Config_Server_Kincony_RestaurarConfiguracaoFabrica(void);
+
 // Editado por Eraldo Bispo - 23/06/2026 - utilitarios do painel web (antes "static", privados
 // deste arquivo) expostos para outros paineis (ex: modbus_rs485_web.c, pagina "RS485 / Modbus
 // RTU") poderem registrar rotas no MESMO servidor HTTP e reaproveitar a MESMA sessao/estilo, em

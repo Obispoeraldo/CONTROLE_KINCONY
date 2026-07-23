@@ -91,6 +91,7 @@ static void setar_falha(uint8_t i, logica_tipo_falha_t falha)
 {
     logica_grupos[i].falha = falha;
     logica_grupos[i].estado = LOGICA_ESTADO_FALHA;
+    logica_grupos[i].origem = ORIGEM_INTERTRAVAMENTO;
     logica_grupos[i].tick_estado = xTaskGetTickCount();
 
     /* Em falha, derruba a saida do grupo para nao ficar tentando partir. */
@@ -241,6 +242,7 @@ esp_err_t Logica_Controle_Iniciar(void)
         logica_grupos[i].comando_aplicado = false;
         logica_grupos[i].feedback = false;
         logica_grupos[i].aguardando_intervalo = false;
+        logica_grupos[i].origem = ORIGEM_RESTORE_BOOT;
         logica_grupos[i].tick_estado = xTaskGetTickCount();
         logica_grupos[i].tick_comando = xTaskGetTickCount();
     }
@@ -269,6 +271,7 @@ void Logica_Controle_Processar(void)
             {
                 logica_grupos[i].comando_desejado = false;
                 logica_grupos[i].aguardando_intervalo = false;
+                logica_grupos[i].origem = ORIGEM_INTERTRAVAMENTO;
             }
 
             // Editado por Eraldo Bispo - 18/06/2026 22:17 - troca de REMOTO para LOCAL e uma acao
@@ -297,7 +300,7 @@ void Logica_Controle_Processar(void)
     atualizar_mascaras();
 }
 
-esp_err_t Logica_Controle_SetComandoGrupo(logica_grupo_t grupo, bool ligar)
+esp_err_t Logica_Controle_SetComandoGrupo(logica_grupo_t grupo, bool ligar, origem_comando_t origem)
 {
     if (!indice_valido(grupo))
     {
@@ -311,25 +314,27 @@ esp_err_t Logica_Controle_SetComandoGrupo(logica_grupo_t grupo, bool ligar)
     }
 
     logica_grupos[grupo].comando_desejado = ligar;
+    logica_grupos[grupo].origem = origem;
     return ESP_OK;
 }
 
-esp_err_t Logica_Controle_AlternarGrupo(logica_grupo_t grupo)
+esp_err_t Logica_Controle_AlternarGrupo(logica_grupo_t grupo, origem_comando_t origem)
 {
     if (!indice_valido(grupo))
     {
         return ESP_ERR_INVALID_ARG;
     }
 
-    return Logica_Controle_SetComandoGrupo(grupo, !logica_grupos[grupo].comando_desejado);
+    return Logica_Controle_SetComandoGrupo(grupo, !logica_grupos[grupo].comando_desejado, origem);
 }
 
-void Logica_Controle_DesligarTodos(void)
+void Logica_Controle_DesligarTodos(origem_comando_t origem)
 {
     for (uint8_t i = 0; i < LOGICA_CONTROLE_NUM_GRUPOS; i++)
     {
         logica_grupos[i].comando_desejado = false;
         logica_grupos[i].aguardando_intervalo = false;
+        logica_grupos[i].origem = origem;
         aplicar_saida(i, false);
     }
 }
@@ -403,6 +408,12 @@ logica_tipo_falha_t Logica_Controle_GetFalhaGrupo(logica_grupo_t grupo)
     return logica_grupos[grupo].falha;
 }
 
+origem_comando_t Logica_Controle_GetOrigemGrupo(logica_grupo_t grupo)
+{
+    if (!indice_valido(grupo)) return ORIGEM_NENHUMA;
+    return logica_grupos[grupo].origem;
+}
+
 uint8_t Logica_Controle_GetMascaraLigados(void)
 {
     return logica_mascara_grupos_ligados;
@@ -437,6 +448,23 @@ const char *Logica_Controle_FalhaToString(logica_tipo_falha_t falha)
         case LOGICA_FALHA_SAIDAS_OFFLINE: return "SAIDAS_OFFLINE";
         case LOGICA_FALHA_ENTRADAS_OFFLINE: return "ENTRADAS_OFFLINE";
         default: return "DESCONHECIDA";
+    }
+}
+
+/* Valores padronizados do campo "src" no payload MQTT de estado. Nao usar "automatico"/"auto"/
+ * "programado" - manter exatamente este conjunto: manual/timer/mqtt/web/interlock/restore/unknown. */
+const char *Logica_Controle_OrigemToMqttString(origem_comando_t origem)
+{
+    switch (origem)
+    {
+        case ORIGEM_MANUAL: return "manual";
+        case ORIGEM_TIMER: return "timer";
+        case ORIGEM_MQTT: return "mqtt";
+        case ORIGEM_WEB: return "web";
+        case ORIGEM_INTERTRAVAMENTO: return "interlock";
+        case ORIGEM_RESTORE_BOOT: return "restore";
+        case ORIGEM_NENHUMA:
+        default: return "unknown";
     }
 }
 

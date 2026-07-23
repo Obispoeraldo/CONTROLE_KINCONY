@@ -10,6 +10,9 @@ idf_component_register(SRCS
     "modbus_master/modbus_rs485_mqtt.c"
     "modbus_master/modbus_rs485_web.c"
     "wifi/wifi_kincony.c"
+    # Criado por Eraldo Bispo - botao fisico de configuracao WiFi (GPIO0/BOOT), ver
+    # docs/RELATORIO_WIFI_RECONEXAO.md
+    "wifi/wifi_config_button.c"
     "mqtt/mqtt_kincony.c"
     "ota/ota_github.c"
     "logica_controle/logica_controle.c"
@@ -39,6 +42,9 @@ idf_component_register(SRCS
     REQUIRES
     freertos
     driver
+    # Criado por Eraldo Bispo - driver/gpio.h (wifi_config_button.c) - ESP-IDF v6 exige o
+    # componente especifico alem do "driver" (compatibilidade agregada)
+    esp_driver_gpio
     esp-modbus
     esp_wifi
     esp_event

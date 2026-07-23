@@ -67,7 +67,6 @@ typedef struct
 } rtc_timer_storage_t;
 
 static rtc_timer_config_t s_timers[RTC_TIMER_QUANTIDADE];
-static bool s_override_manual[LOGICA_CONTROLE_NUM_GRUPOS];
 
 static SemaphoreHandle_t s_mutex = NULL;
 
@@ -237,7 +236,6 @@ static esp_err_t timer_salvar_nvs(void)
 static esp_err_t timer_carregar_nvs(void)
 {
     memset(s_timers, 0, sizeof(s_timers));
-    memset(s_override_manual, 0, sizeof(s_override_manual));
 
     nvs_handle_t handle;
     esp_err_t ret = nvs_open(
@@ -482,16 +480,10 @@ static void timer_executar_grupo(uint8_t grupo, bool ligar)
         return;
     }
 
-    if (s_mutex != NULL &&
-        xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) == pdTRUE)
-    {
-        s_override_manual[grupo - 1U] = false;
-        xSemaphoreGive(s_mutex);
-    }
-
     esp_err_t ret = Logica_Controle_SetComandoGrupo(
         (logica_grupo_t)(grupo - 1U),
-        ligar
+        ligar,
+        ORIGEM_TIMER
     );
 
     ESP_LOGI(
@@ -771,30 +763,6 @@ void RTC_DS1307_NotificarSincronizacaoNtp(const struct timeval *tv)
     }
 }
 
-void RTC_DS1307_RegistrarComandoManual(uint8_t grupo)
-{
-    if (s_mutex == NULL)
-    {
-        return;
-    }
-
-    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE)
-    {
-        return;
-    }
-
-    if (grupo == 0U)
-    {
-        memset(s_override_manual, 1, sizeof(s_override_manual));
-    }
-    else if (grupo >= 1U && grupo <= LOGICA_CONTROLE_NUM_GRUPOS)
-    {
-        s_override_manual[grupo - 1U] = true;
-    }
-
-    xSemaphoreGive(s_mutex);
-}
-
 void RTC_DS1307_Processar(void)
 {
     if (s_mutex == NULL || !s_rtc_disponivel)
@@ -888,7 +856,19 @@ esp_err_t RTC_DS1307_ProcessarComandoMQTT(
         return ESP_ERR_NOT_SUPPORTED;
     }
 
-    const char *acao = action->valuestring;
+    /*
+     * Copia a acao para um buffer local ANTES de qualquer cJSON_Delete(root) que aconteca
+     * mais abaixo nesta funcao. action->valuestring pertence ao heap alocado por cJSON_Parse();
+     * ele e liberado por cJSON_Delete(root), e usa-lo depois disso (como em alguns pontos desta
+     * funcao que respondem com o proprio nome da acao) e use-after-free - a causa raiz da
+     * corrupcao do campo "action" observada nas respostas de timer_enable/timer_disable. Com a
+     * copia, `acao` nunca mais depende do tempo de vida de `root`.
+     */
+    char acao_buf[24];
+    strncpy(acao_buf, action->valuestring, sizeof(acao_buf) - 1);
+    acao_buf[sizeof(acao_buf) - 1] = '\0';
+    const char *acao = acao_buf;
+
     bool comando_suportado =
         strcmp(acao, "timer_set") == 0 ||
         strcmp(acao, "timer_enable") == 0 ||

@@ -87,12 +87,6 @@ esp_err_t RTC_DS1307_ProcessarComandoMQTT(
 );
 
 /*
- * Registra que um comando manual foi aceito.
- * grupo: 1 a LOGICA_CONTROLE_NUM_GRUPOS; 0 representa todos.
- */
-void RTC_DS1307_RegistrarComandoManual(uint8_t grupo);
-
-/*
  * Deve ser chamada continuamente no loop principal.
  * A funcao le o RTC aproximadamente uma vez por segundo e executa
  * os eventos dos quatro timers apenas uma vez por minuto.

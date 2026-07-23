@@ -291,6 +291,46 @@ esp_err_t Config_Server_Kincony_RestaurarBackupWifi(void)
     return ESP_OK;
 }
 
+esp_err_t Config_Server_Kincony_ApagarCredenciaisWifi(void)
+{
+    nvs_handle_t nvs;
+
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK)
+    {
+        return ESP_FAIL;
+    }
+
+    nvs_erase_key(nvs, NVS_KEY_WIFI_SSID);
+    nvs_erase_key(nvs, NVS_KEY_WIFI_SENHA);
+    nvs_erase_key(nvs, NVS_KEY_WIFI_SSID_BKP);
+    nvs_erase_key(nvs, NVS_KEY_WIFI_SENHA_BKP);
+    nvs_commit(nvs);
+    nvs_close(nvs);
+
+    config_wifi_ssid[0] = '\0';
+    config_wifi_senha[0] = '\0';
+
+    ESP_LOGW(TAG, "Credenciais WiFi apagadas (botao de configuracao).");
+
+    return ESP_OK;
+}
+
+esp_err_t Config_Server_Kincony_RestaurarConfiguracaoFabrica(void)
+{
+    nvs_handle_t nvs;
+
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK)
+    {
+        nvs_erase_all(nvs);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+
+    ESP_LOGW(TAG, "Configuracao de fabrica restaurada (namespace '%s' apagado).", NVS_NAMESPACE);
+
+    return ESP_OK;
+}
+
 // Editado por Eraldo Bispo - 23/06/2026 - exposta no .h (antes "static") para outros paineis
 // (ex: modbus_rs485_web.c) reaproveitarem em vez de duplicar o parsing de formulario.
 void Config_Server_Kincony_UrlDecode(char *destino, const char *origem, size_t tamanho_destino)
@@ -718,30 +758,56 @@ static esp_err_t handler_post_config(httpd_req_t *req)
     Config_Server_Kincony_UrlDecode(novo_ntp_servidor, ntp_servidor_bruto, sizeof(novo_ntp_servidor));
     Config_Server_Kincony_UrlDecode(novo_ntp_fuso, ntp_fuso_bruto, sizeof(novo_ntp_fuso));
 
+    // Criado por Eraldo Bispo - valida a rede WiFi ANTES de gravar qualquer coisa em NVS (ver
+    // Wifi_Kincony_TestarNovaRede em wifi_kincony.c e docs/RELATORIO_WIFI_RECONEXAO.md, secao
+    // "Validacao antes de salvar"). A credencial antiga so e substituida se a nova realmente
+    // conectar - nunca fica sem recuperacao por causa de um SSID/senha digitado errado.
+    // Bloqueia so esta requisicao HTTP (task propria do servidor, independente da task
+    // principal - Modbus/MQTT/logica de controle continuam rodando normalmente).
+    bool alterando_wifi = (strlen(novo_ssid) > 0 || strlen(nova_senha) > 0);
+    bool wifi_ok = true;
+    const char *wifi_erro = NULL;
+
+    if (alterando_wifi)
+    {
+        char ssid_teste[TAM_SSID];
+        char senha_teste[TAM_SENHA];
+
+        // Campo em branco = mantem o valor atual (permite trocar so a senha, ou so o SSID).
+        strncpy(ssid_teste, (strlen(novo_ssid) > 0) ? novo_ssid : config_wifi_ssid, sizeof(ssid_teste) - 1);
+        ssid_teste[sizeof(ssid_teste) - 1] = '\0';
+        strncpy(senha_teste, (strlen(nova_senha) > 0) ? nova_senha : config_wifi_senha, sizeof(senha_teste) - 1);
+        senha_teste[sizeof(senha_teste) - 1] = '\0';
+
+        wifi_ok = Wifi_Kincony_TestarNovaRede(ssid_teste, senha_teste, 15000);
+
+        if (!wifi_ok)
+        {
+            wifi_erro = "Nao foi possivel conectar na rede informada (SSID/senha incorretos "
+                        "ou rede fora de alcance). A configuracao WiFi anterior foi mantida.";
+        }
+    }
+
     nvs_handle_t nvs;
 
     if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK)
     {
-        bool alterando_wifi = (strlen(novo_ssid) > 0 || strlen(nova_senha) > 0);
-
-        // Editado por Eraldo Bispo — guarda o WiFi atual (que esta funcionando, ja que o painel esta acessivel)
-        // como backup antes de aplicar a troca, para o main.c poder reverter se a nova rede falhar
-        if (alterando_wifi)
+        // So grava o WiFi em NVS depois de confirmar que a rede nova conecta de verdade -
+        // credenciais invalidas nunca sao persistidas (requisito de nao deixar o controlador
+        // sem recuperacao).
+        if (alterando_wifi && wifi_ok)
         {
-            nvs_set_str(nvs, NVS_KEY_WIFI_SSID_BKP, config_wifi_ssid);
-            nvs_set_str(nvs, NVS_KEY_WIFI_SENHA_BKP, config_wifi_senha);
-        }
+            if (strlen(novo_ssid) > 0)
+            {
+                nvs_set_str(nvs, NVS_KEY_WIFI_SSID, novo_ssid);
+                strncpy(config_wifi_ssid, novo_ssid, sizeof(config_wifi_ssid) - 1);
+            }
 
-        if (strlen(novo_ssid) > 0)
-        {
-            nvs_set_str(nvs, NVS_KEY_WIFI_SSID, novo_ssid);
-            strncpy(config_wifi_ssid, novo_ssid, sizeof(config_wifi_ssid) - 1);
-        }
-
-        if (strlen(nova_senha) > 0)
-        {
-            nvs_set_str(nvs, NVS_KEY_WIFI_SENHA, nova_senha);
-            strncpy(config_wifi_senha, nova_senha, sizeof(config_wifi_senha) - 1);
+            if (strlen(nova_senha) > 0)
+            {
+                nvs_set_str(nvs, NVS_KEY_WIFI_SENHA, nova_senha);
+                strncpy(config_wifi_senha, nova_senha, sizeof(config_wifi_senha) - 1);
+            }
         }
 
         if (strlen(novo_broker) > 0)
@@ -784,6 +850,31 @@ static esp_err_t handler_post_config(httpd_req_t *req)
     }
 
     httpd_resp_set_type(req, "text/html");
+
+    if (alterando_wifi && !wifi_ok)
+    {
+        // Nao reinicia: a rede anterior ja foi restaurada e reconectada por
+        // Wifi_Kincony_TestarNovaRede(), e nada foi gravado em NVS. O operador pode ajustar
+        // o SSID/senha e tentar de novo, sem perder acesso ao controlador.
+        char pagina_erro[700];
+        snprintf(pagina_erro, sizeof(pagina_erro),
+            "<!DOCTYPE html><html><head><meta charset='utf-8'></head>"
+            "<body style='font-family:sans-serif;background:#0e2236;color:#fff;"
+            "display:flex;justify-content:center;align-items:center;min-height:100vh;"
+            "text-align:center;padding:24px'>"
+            "<div><h3>Falha ao conectar na rede WiFi informada</h3><p>%s</p>"
+            "<p><a href='/configuracoes' style='color:#4fd1ff'>Voltar e tentar novamente</a></p></div>"
+            "</body></html>", wifi_erro);
+        httpd_resp_send(req, pagina_erro, HTTPD_RESP_USE_STRLEN);
+
+        ESP_LOGW(TAG, "Configuracao WiFi rejeitada (falha no teste de conexao) - nada foi gravado.");
+
+        return ESP_OK;
+    }
+
+    // WiFi (se alterado) ja foi validado e esta conectado - e os demais campos (broker/MQTT/
+    // NTP) ainda exigem reinicio para serem aplicados (Mqtt_Kincony_Init so roda no boot).
+    // Reiniciar agora e seguro: a NVS so tem credenciais WiFi comprovadamente funcionais.
     httpd_resp_send(req,
         "<!DOCTYPE html><html><head><meta charset='utf-8'></head>"
         "<body style='font-family:sans-serif;background:#0e2236;color:#fff;"

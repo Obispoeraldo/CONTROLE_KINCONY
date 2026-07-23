@@ -441,14 +441,16 @@ esp_err_t Mqtt_Kincony_PublicarMonitoramento(void)
         bool out = Logica_Controle_GetComandoGrupo((logica_grupo_t)i);
         bool fb = Logica_Controle_GetFeedbackGrupo((logica_grupo_t)i);
         bool fault = Logica_Controle_GetFalhaGrupo((logica_grupo_t)i) != LOGICA_FALHA_NENHUMA;
+        const char *src = Logica_Controle_OrigemToMqttString(Logica_Controle_GetOrigemGrupo((logica_grupo_t)i));
 
         pos += snprintf(payload + pos, sizeof(payload) - pos,
-            "%s{\"g\":%u,\"out\":%s,\"fb\":%s,\"fault\":%s,\"src\":\"manual\"}",
+            "%s{\"g\":%u,\"out\":%s,\"fb\":%s,\"fault\":%s,\"src\":\"%s\"}",
             (i == 0) ? "" : ",",
             i + 1,
             out ? "true" : "false",
             fb ? "true" : "false",
-            fault ? "true" : "false"
+            fault ? "true" : "false",
+            src
         );
     }
 
@@ -606,22 +608,14 @@ if (ret_rtc != ESP_ERR_NOT_SUPPORTED)
 
 if (grupo == 0)
 {
-    /*
-     * Grupo zero representa todos os grupos.
-     * O override manual so eh registrado quando
-     * a logica realmente aceita o comando.
-     */
+    /* Grupo zero representa todos os grupos. */
     for (uint8_t i = 0; i < LOGICA_CONTROLE_NUM_GRUPOS; i++)
     {
         esp_err_t ret = Logica_Controle_SetComandoGrupo(
             (logica_grupo_t)i,
-            ligar
+            ligar,
+            ORIGEM_MQTT
         );
-
-        if (ret == ESP_OK)
-        {
-            RTC_DS1307_RegistrarComandoManual(i + 1);
-        }
 
         publicar_ack_comando(
             i + 1,
@@ -634,13 +628,9 @@ else if (grupo >= 1 && grupo <= LOGICA_CONTROLE_NUM_GRUPOS)
 {
     esp_err_t ret = Logica_Controle_SetComandoGrupo(
         (logica_grupo_t)(grupo - 1),
-        ligar
+        ligar,
+        ORIGEM_MQTT
     );
-
-    if (ret == ESP_OK)
-    {
-        RTC_DS1307_RegistrarComandoManual((uint8_t)grupo);
-    }
 
     publicar_ack_comando(
         (uint8_t)grupo,
