@@ -18,6 +18,10 @@ bool logica_alarme_ativo = false;
 
 static bool remoto_anterior = false;
 static TickType_t tick_ultima_partida = 0;
+// Criado por Eraldo Bispo - true uma unica vez logo apos o modo remoto/local mudar, consumida por
+// Logica_Controle_ConsumirMudancaModo() (usada pelo MQTT para publicar o topico state na hora,
+// sem esperar o intervalo periodico - ver Mqtt_Kincony_Processar()).
+static volatile bool s_modo_mudou_recentemente = false;
 
 static const entrada_kincony_t entradas_feedback[LOGICA_CONTROLE_NUM_GRUPOS] = {
     GRUPO_MOTOR1,
@@ -92,6 +96,9 @@ static void setar_falha(uint8_t i, logica_tipo_falha_t falha)
     logica_grupos[i].falha = falha;
     logica_grupos[i].estado = LOGICA_ESTADO_FALHA;
     logica_grupos[i].origem = ORIGEM_INTERTRAVAMENTO;
+    /* Falha/intertravamento tem prioridade sobre qualquer timer - cancela a propriedade para que
+     * nenhum timer religue ou desligue este grupo depois (ver Logica_Controle_TimerLiberarPropriedade). */
+    logica_grupos[i].timer_dono = -1;
     logica_grupos[i].tick_estado = xTaskGetTickCount();
 
     /* Em falha, derruba a saida do grupo para nao ficar tentando partir. */
@@ -139,6 +146,34 @@ static void processar_grupo(uint8_t i)
 
     if (g->estado == LOGICA_ESTADO_FALHA)
     {
+        return;
+    }
+
+    /* Modo local: o ESP32 nao comanda a saida deste grupo (bloqueado em
+     * Logica_Controle_SetComandoGrupo) - o aerador pode continuar ligado pelo circuito/selecao
+     * fisica do painel, e isso e valido (mode=local, out=false, fb=true). Sem este desvio, o
+     * grupo ficava preso em AGUARDANDO_PARADA esperando o feedback cair e, apos
+     * LOGICA_TIMEOUT_PARADA_MS, caia em LOGICA_FALHA_TIMEOUT_PARADA/alarme geral so por causa da
+     * troca de modo - a saida do ESP32 ja foi desligada por Logica_Controle_Processar() ao sair
+     * do remoto, o que resta e so exibir a origem correta. */
+    if (!logica_modo_remoto)
+    {
+        g->comando_aplicado = false;
+        g->estado = LOGICA_ESTADO_DESLIGADO;
+        g->timer_dono = -1;
+
+        origem_comando_t nova_origem = g->feedback ? ORIGEM_MANUAL : ORIGEM_INTERTRAVAMENTO;
+
+        if (nova_origem != g->origem)
+        {
+            g->origem = nova_origem;
+
+            if (nova_origem == ORIGEM_MANUAL)
+            {
+                ESP_LOGI(TAG, "Grupo %d acionado localmente, feedback ativo", i + 1);
+            }
+        }
+
         return;
     }
 
@@ -243,6 +278,7 @@ esp_err_t Logica_Controle_Iniciar(void)
         logica_grupos[i].feedback = false;
         logica_grupos[i].aguardando_intervalo = false;
         logica_grupos[i].origem = ORIGEM_RESTORE_BOOT;
+        logica_grupos[i].timer_dono = -1;
         logica_grupos[i].tick_estado = xTaskGetTickCount();
         logica_grupos[i].tick_comando = xTaskGetTickCount();
     }
@@ -264,6 +300,7 @@ void Logica_Controle_Processar(void)
     if (logica_modo_remoto != remoto_anterior)
     {
         ESP_LOGI(TAG, "Modo alterado para: %s", logica_modo_remoto ? "REMOTO" : "MONITORAMENTO");
+        s_modo_mudou_recentemente = true;
 
         if (!logica_modo_remoto)
         {
@@ -272,6 +309,9 @@ void Logica_Controle_Processar(void)
                 logica_grupos[i].comando_desejado = false;
                 logica_grupos[i].aguardando_intervalo = false;
                 logica_grupos[i].origem = ORIGEM_INTERTRAVAMENTO;
+                /* Cenario F da auditoria de propriedade timer x manual: em modo local nenhum
+                 * grupo pode ficar registrado como pertencente a um timer. */
+                logica_grupos[i].timer_dono = -1;
             }
 
             // Editado por Eraldo Bispo - 18/06/2026 22:17 - troca de REMOTO para LOCAL e uma acao
@@ -310,7 +350,20 @@ esp_err_t Logica_Controle_SetComandoGrupo(logica_grupo_t grupo, bool ligar, orig
     if (!logica_modo_remoto)
     {
         logica_grupos[grupo].comando_desejado = false;
+        ESP_LOGW(TAG, "Comando recusado: painel em modo local (grupo %d)", grupo + 1);
         return ESP_ERR_INVALID_STATE;
+    }
+
+    /* Regra central de propriedade: qualquer comando aceito que NAO venha do proprio timer
+     * cancela a propriedade que um timer possa ter sobre este grupo - e o unico lugar que faz
+     * essa checagem (nao ha "if origem == ORIGEM_MQTT" espalhado por ai). Cobre tanto o operador
+     * assumindo um grupo ligado pelo timer (ligar=true) quanto desligando-o manualmente
+     * (ligar=false) - em ambos os casos o timer perde o direito de agir sobre o grupo depois. */
+    if (origem != ORIGEM_TIMER && logica_grupos[grupo].timer_dono != -1)
+    {
+        ESP_LOGI(TAG, "Grupo %d assumido por comando externo (%s); propriedade do timer cancelada",
+                 grupo + 1, Logica_Controle_OrigemToMqttString(origem));
+        logica_grupos[grupo].timer_dono = -1;
     }
 
     logica_grupos[grupo].comando_desejado = ligar;
@@ -335,6 +388,12 @@ void Logica_Controle_DesligarTodos(origem_comando_t origem)
         logica_grupos[i].comando_desejado = false;
         logica_grupos[i].aguardando_intervalo = false;
         logica_grupos[i].origem = origem;
+
+        if (origem != ORIGEM_TIMER)
+        {
+            logica_grupos[i].timer_dono = -1;
+        }
+
         aplicar_saida(i, false);
     }
 }
@@ -379,6 +438,13 @@ bool Logica_Controle_IsRemoto(void)
     return logica_modo_remoto;
 }
 
+bool Logica_Controle_ConsumirMudancaModo(void)
+{
+    bool mudou = s_modo_mudou_recentemente;
+    s_modo_mudou_recentemente = false;
+    return mudou;
+}
+
 bool Logica_Controle_IsFalhaGeral(void)
 {
     return logica_falha_geral;
@@ -412,6 +478,24 @@ origem_comando_t Logica_Controle_GetOrigemGrupo(logica_grupo_t grupo)
 {
     if (!indice_valido(grupo)) return ORIGEM_NENHUMA;
     return logica_grupos[grupo].origem;
+}
+
+void Logica_Controle_TimerAssumirPropriedade(logica_grupo_t grupo, int8_t timer_id)
+{
+    if (!indice_valido(grupo)) return;
+    logica_grupos[grupo].timer_dono = timer_id;
+}
+
+bool Logica_Controle_TimerEhDono(logica_grupo_t grupo, int8_t timer_id)
+{
+    if (!indice_valido(grupo)) return false;
+    return logica_grupos[grupo].timer_dono == timer_id;
+}
+
+void Logica_Controle_TimerLiberarPropriedade(logica_grupo_t grupo)
+{
+    if (!indice_valido(grupo)) return;
+    logica_grupos[grupo].timer_dono = -1;
 }
 
 uint8_t Logica_Controle_GetMascaraLigados(void)

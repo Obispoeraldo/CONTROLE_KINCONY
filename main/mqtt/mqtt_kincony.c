@@ -92,6 +92,11 @@ static void copiar_evento_para_string(char *destino, size_t tamanho_destino, con
     destino[copiar] = '\0';
 }
 
+// Editado por Eraldo Bispo - acrescenta "reason":"local_mode" quando o comando e recusado por
+// causa do modo local (ESP_ERR_INVALID_STATE, unico motivo que Logica_Controle_SetComandoGrupo()
+// retorna hoje) - resposta inequivoca em vez de so "result":"blocked" (ver secao 4 da auditoria
+// de modo remoto/local). Campo omitido quando o comando e aceito, para nao mudar o formato ja
+// usado pelos consumidores existentes.
 static void publicar_ack_comando(
     uint8_t grupo,
     const char *acao,
@@ -100,21 +105,47 @@ static void publicar_ack_comando(
 {
     char payload[256];
 
-    snprintf(
-        payload,
-        sizeof(payload),
-        "{"
-            "\"type\":\"command_ack\","
-            "\"group\":%u,"
-            "\"action\":\"%s\","
-            "\"result\":\"%s\","
-            "\"remote\":%s"
-        "}",
-        grupo,
-        acao,
-        (ret == ESP_OK) ? "ok" : "blocked",
-        Logica_Controle_IsRemoto() ? "true" : "false"
-    );
+    if (ret == ESP_ERR_INVALID_STATE)
+    {
+        ESP_LOGW(TAG, "Grupo %u: comando remoto bloqueado por modo local", grupo);
+    }
+
+    if (ret == ESP_OK)
+    {
+        snprintf(
+            payload,
+            sizeof(payload),
+            "{"
+                "\"type\":\"command_ack\","
+                "\"group\":%u,"
+                "\"action\":\"%s\","
+                "\"result\":\"ok\","
+                "\"remote\":%s"
+            "}",
+            grupo,
+            acao,
+            Logica_Controle_IsRemoto() ? "true" : "false"
+        );
+    }
+    else
+    {
+        snprintf(
+            payload,
+            sizeof(payload),
+            "{"
+                "\"type\":\"command_ack\","
+                "\"group\":%u,"
+                "\"action\":\"%s\","
+                "\"result\":\"blocked\","
+                "\"remote\":%s,"
+                "\"reason\":\"%s\""
+            "}",
+            grupo,
+            acao,
+            Logica_Controle_IsRemoto() ? "true" : "false",
+            (ret == ESP_ERR_INVALID_STATE) ? "local_mode" : "invalid"
+        );
+    }
 
     Mqtt_Kincony_Publicar(
         MQTT_TOPIC_STATE,
@@ -335,6 +366,16 @@ void Mqtt_Kincony_Processar(void)
     }
 
     TickType_t agora = xTaskGetTickCount();
+
+    // Editado por Eraldo Bispo - troca de modo remoto/local publica o topico state na hora (no
+    // maximo ~200ms, um giro do loop principal), em vez de esperar o intervalo periodico
+    // (mqtt_intervalo_ms, ate 180s) - ver Logica_Controle_ConsumirMudancaModo().
+    if (Logica_Controle_ConsumirMudancaModo())
+    {
+        mqtt_tick_ultima_publicacao = agora;
+        Mqtt_Kincony_PublicarMonitoramento();
+        return;
+    }
 
     if ((agora - mqtt_tick_ultima_publicacao) >= pdMS_TO_TICKS(mqtt_intervalo_ms))
     {

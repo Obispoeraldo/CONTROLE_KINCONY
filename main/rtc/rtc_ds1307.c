@@ -473,29 +473,89 @@ static uint32_t rtc_assinatura_minuto(const rtc_ds1307_t *rtc)
     return assinatura;
 }
 
-static void timer_executar_grupo(uint8_t grupo, bool ligar)
+/*
+ * Regra central de propriedade (ver docs/RELATORIO_TIMER_PROPRIEDADE.md): um timer so pode
+ * desligar um grupo se aquela execucao do timer tiver ligado o grupo e ainda mantiver a
+ * propriedade dele. Qualquer comando aceito com origem != ORIGEM_TIMER (MQTT, manual local, etc.)
+ * cancela a propriedade automaticamente em Logica_Controle_SetComandoGrupo() - aqui so precisamos
+ * checar/gravar quem e o dono antes de agir, nunca sobrescrever um grupo que ja tem outra origem.
+ *
+ * timer_id identifica QUAL dos RTC_TIMER_QUANTIDADE timers configurados disparou o evento -
+ * necessario para o caso de dois timers se sobrepondo (o timer que NAO ligou o grupo nunca pode
+ * desliga-lo nem tomar a propriedade so porque o encontrou ligado).
+ */
+static void timer_executar_grupo(uint8_t timer_id, uint8_t grupo, bool ligar)
 {
     if (grupo < 1U || grupo > LOGICA_CONTROLE_NUM_GRUPOS)
     {
         return;
     }
 
-    esp_err_t ret = Logica_Controle_SetComandoGrupo(
-        (logica_grupo_t)(grupo - 1U),
-        ligar,
-        ORIGEM_TIMER
-    );
+    logica_grupo_t idx = (logica_grupo_t)(grupo - 1U);
 
-    ESP_LOGI(
-        TAG,
-        "Timer: grupo %u -> %s (%s)",
-        (unsigned int)grupo,
-        ligar ? "ON" : "OFF",
-        esp_err_to_name(ret)
-    );
+    if (ligar)
+    {
+        if (Logica_Controle_GetComandoGrupo(idx))
+        {
+            /* Grupo ja ligado - so o timer que e o dono atual pode ser "responsavel" por ele; se
+             * pertence a outra origem (mqtt/manual/web) ou a outro timer, nao mexe em nada. */
+            origem_comando_t origem_atual = Logica_Controle_GetOrigemGrupo(idx);
+
+            if (origem_atual != ORIGEM_TIMER)
+            {
+                ESP_LOGI(TAG, "Timer %u: grupo %u ignorado - ja ligado por origem %s",
+                         (unsigned int)timer_id, (unsigned int)grupo,
+                         Logica_Controle_OrigemToMqttString(origem_atual));
+            }
+            else if (!Logica_Controle_TimerEhDono(idx, (int8_t)timer_id))
+            {
+                ESP_LOGI(TAG, "Timer %u: grupo %u ja pertence a outro timer, ignorado",
+                         (unsigned int)timer_id, (unsigned int)grupo);
+            }
+
+            return;
+        }
+
+        esp_err_t ret = Logica_Controle_SetComandoGrupo(idx, true, ORIGEM_TIMER);
+
+        if (ret == ESP_ERR_INVALID_STATE)
+        {
+            ESP_LOGW(TAG, "Timer ignorado: painel em modo local (grupo %u)", (unsigned int)grupo);
+            return;
+        }
+
+        if (ret == ESP_OK)
+        {
+            Logica_Controle_TimerAssumirPropriedade(idx, (int8_t)timer_id);
+            ESP_LOGI(TAG, "Timer %u: grupo %u acionado e registrado na execucao do timer",
+                     (unsigned int)timer_id, (unsigned int)grupo);
+        }
+
+        return;
+    }
+
+    /* Desligar: so pode agir se esta execucao do timer ainda for a dona do grupo. */
+    if (!Logica_Controle_TimerEhDono(idx, (int8_t)timer_id))
+    {
+        ESP_LOGI(TAG, "Timer %u: grupo %u preservado - nao pertence a este timer",
+                 (unsigned int)timer_id, (unsigned int)grupo);
+        return;
+    }
+
+    esp_err_t ret = Logica_Controle_SetComandoGrupo(idx, false, ORIGEM_TIMER);
+
+    if (ret == ESP_ERR_INVALID_STATE)
+    {
+        ESP_LOGW(TAG, "Timer ignorado: painel em modo local (grupo %u)", (unsigned int)grupo);
+        return;
+    }
+
+    Logica_Controle_TimerLiberarPropriedade(idx);
+    ESP_LOGI(TAG, "Timer %u: grupo %u desligado ao finalizar timer",
+             (unsigned int)timer_id, (unsigned int)grupo);
 }
 
-static void timer_executar(const rtc_timer_config_t *timer, bool ligar)
+static void timer_executar(uint8_t timer_id, const rtc_timer_config_t *timer, bool ligar)
 {
     if (timer == NULL)
     {
@@ -508,12 +568,12 @@ static void timer_executar(const rtc_timer_config_t *timer, bool ligar)
              grupo <= LOGICA_CONTROLE_NUM_GRUPOS;
              grupo++)
         {
-            timer_executar_grupo(grupo, ligar);
+            timer_executar_grupo(timer_id, grupo, ligar);
         }
     }
     else
     {
-        timer_executar_grupo(timer->grupo, ligar);
+        timer_executar_grupo(timer_id, timer->grupo, ligar);
     }
 }
 
@@ -818,12 +878,12 @@ void RTC_DS1307_Processar(void)
         if (rtc.hora == timer->hora_liga &&
             rtc.minuto == timer->minuto_liga)
         {
-            timer_executar(timer, true);
+            timer_executar(i, timer, true);
         }
         else if (rtc.hora == timer->hora_desliga &&
                  rtc.minuto == timer->minuto_desliga)
         {
-            timer_executar(timer, false);
+            timer_executar(i, timer, false);
         }
     }
 }
