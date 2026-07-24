@@ -26,6 +26,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/task.h"
 
 #define TAG "WIFI_KINCONY"
 
@@ -524,7 +525,16 @@ bool Wifi_Kincony_TestarNovaRede(const char *ssid, const char *senha, uint32_t t
 
     xEventGroupClearBits(wifi_event_group, WIFI_BIT_CONECTADO | WIFI_BIT_FALHA);
 
+    // Desconectar da rede ANTIGA aqui gera seu proprio WIFI_EVENT_STA_DISCONNECTED (assincrono).
+    // Como s_testando_rede ja esta true, o handler acima seta WIFI_BIT_FALHA para esse evento -
+    // sem esta espera, esse desconectar esperado da rede antiga era contado como se fosse a rede
+    // NOVA falhando (teste "falhava" em ~30ms, antes de sequer tentar a rede nova de verdade).
+    // Da um tempo curto para esse desconectar se resolver e limpa o bit de novo logo antes de
+    // conectar na rede nova - só a partir daqui um WIFI_BIT_FALHA representa a rede nova.
     esp_wifi_disconnect();
+    vTaskDelay(pdMS_TO_TICKS(300));
+    xEventGroupClearBits(wifi_event_group, WIFI_BIT_FALHA);
+
     wifi_aplicar_config_sta(ssid, senha);
     esp_wifi_connect();
 
